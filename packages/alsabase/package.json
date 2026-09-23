@@ -1,0 +1,49 @@
+{
+  "name": "alsabase",
+  "version": "1.0.0",
+  "description": "Official JavaScript/TypeScript SDK for AlsaBase - lightweight, realtime, batteries-included backend with SQLite",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && node ./build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx ./test/sdk.test.ts"
+  },
+  "keywords": [
+    "alsabase",
+    "sdk",
+    "client",
+    "database",
+    "sqlite",
+    "realtime",
+    "auth",
+    "typescript"
+  ],
+  "author": "AlsaBase",
+  "license": "MIT",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}
