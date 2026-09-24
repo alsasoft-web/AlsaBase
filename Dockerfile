@@ -1,9 +1,9 @@
 # --- Stage 1: Build Frontend Dashboard and SDK ---
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install build tools required for native C++ modules (better-sqlite3)
+# Install build tools required for native C++ modules
 RUN apk add --no-cache python3 make g++
 
 # Copy package descriptors
@@ -21,7 +21,7 @@ RUN npm run build
 RUN npm run build --prefix packages/alsabase
 
 # --- Stage 2: Production Server Runtime ---
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 
