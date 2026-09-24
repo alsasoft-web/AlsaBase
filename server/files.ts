@@ -170,6 +170,36 @@ export function deleteRecordFiles(collectionName: string, recordId: string) {
   }
 }
 
+/**
+ * Safely move a file or directory across filesystems / mount points / devices.
+ * Tries fast fs.renameSync first; falls back to copy+remove on EXDEV / permission cross-device errors.
+ */
+export function safeMoveSync(srcPath: string, dstPath: string): void {
+  try {
+    fs.renameSync(srcPath, dstPath);
+  } catch (err: any) {
+    if (
+      err &&
+      (err.code === 'EXDEV' ||
+        err.code === 'EPERM' ||
+        err.code === 'EBUSY' ||
+        err.code === 'EACCES' ||
+        err.message?.includes('cross-device'))
+    ) {
+      const stats = fs.statSync(srcPath);
+      if (stats.isDirectory()) {
+        fs.cpSync(srcPath, dstPath, { recursive: true });
+        fs.rmSync(srcPath, { recursive: true, force: true });
+      } else {
+        fs.copyFileSync(srcPath, dstPath);
+        fs.unlinkSync(srcPath);
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
 function getParam(param: string | string[] | undefined): string {
   if (Array.isArray(param)) return param[0] || '';
   return param || '';

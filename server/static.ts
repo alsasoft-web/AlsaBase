@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { safeMoveSync } from "./files";
 
 const PUBLIC_DIR =
   process.env.PUBLIC_DIR || path.resolve(process.cwd(), "_public");
@@ -530,7 +531,7 @@ staticRouter.post("/rename", (req: Request, res: Response) => {
     }
 
     fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-    fs.renameSync(srcPath, dstPath);
+    safeMoveSync(srcPath, dstPath);
 
     res.json({
       success: true,
@@ -617,7 +618,7 @@ staticRouter.delete(["/folder", "/directory"], (req: Request, res: Response) => 
 
     const safeClean = rawPath.replace(/[\/\\]/g, "_");
     const trashTarget = path.join(trashDir, `${Date.now()}_public_dir_${safeClean}`);
-    fs.renameSync(dirPath, trashTarget);
+    safeMoveSync(dirPath, trashTarget);
 
     res.json({ success: true, message: `Moved folder ${rawPath} to .trash` });
   } catch (err: any) {
@@ -649,7 +650,7 @@ staticRouter.delete(["/file", /^\/file\/(.+)$/], (req: Request, res: Response) =
 
     const safeClean = filename.replace(/[\/\\]/g, "_");
     const trashTarget = path.join(trashDir, `${Date.now()}_public_${safeClean}`);
-    fs.renameSync(filePath, trashTarget);
+    safeMoveSync(filePath, trashTarget);
 
     res.json({ success: true, message: `Moved ${filename} to .trash` });
   } catch (err: any) {

@@ -8,6 +8,7 @@ import { db } from "./db";
 import { AuthPayload } from "./auth";
 import { logToDb } from "./logger";
 import { listCollections } from "./schema";
+import { safeMoveSync } from "./files";
 import {
   onRecordEvent,
   onCustomEvent,
@@ -781,7 +782,7 @@ export function createPublicFilesApi() {
       trashDir,
       `${Date.now()}_public_${safeClean}`,
     );
-    fs.renameSync(fullPath, trashTarget);
+    safeMoveSync(fullPath, trashTarget);
     return true;
   };
 

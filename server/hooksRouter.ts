@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { requireSuperuser } from './auth';
+import { safeMoveSync } from './files';
 import {
   HOOKS_DIR,
   getHooksOverview,
@@ -330,7 +331,7 @@ hooksRouter.post('/files/rename', requireSuperuser, async (req: Request, res: Re
     }
 
     fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-    fs.renameSync(srcPath, dstPath);
+    safeMoveSync(srcPath, dstPath);
 
     // Reload hooks registry
     await loadAllHooks();
@@ -423,7 +424,7 @@ hooksRouter.delete(['/files/folder', '/files/directory'], requireSuperuser, asyn
 
     const safeClean = rawPath.replace(/[\/\\]/g, '_');
     const trashTarget = path.join(trashDir, `${Date.now()}_hooks_dir_${safeClean}`);
-    fs.renameSync(dirPath, trashTarget);
+    safeMoveSync(dirPath, trashTarget);
 
     // Reload hooks registry
     await loadAllHooks();
@@ -499,7 +500,7 @@ hooksRouter.delete('/files/file', requireSuperuser, async (req: Request, res: Re
 
     const safeClean = filename.replace(/[\/\\]/g, '_');
     const trashTarget = path.join(trashDir, `${Date.now()}_hooks_${safeClean}`);
-    fs.renameSync(filePath, trashTarget);
+    safeMoveSync(filePath, trashTarget);
 
     // Reload hooks registry
     await loadAllHooks();
@@ -529,7 +530,7 @@ hooksRouter.delete(/^\/files\/(.+)$/, requireSuperuser, async (req: Request, res
 
     const safeClean = filename.replace(/[\/\\]/g, '_');
     const trashTarget = path.join(trashDir, `${Date.now()}_hooks_${safeClean}`);
-    fs.renameSync(filePath, trashTarget);
+    safeMoveSync(filePath, trashTarget);
 
     // Reload hooks registry
     await loadAllHooks();
