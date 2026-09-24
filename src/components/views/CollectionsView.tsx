@@ -1404,21 +1404,23 @@ export const CollectionsView: React.FC = () => {
                     Indexes
                   </Button>
 
-                  <Button
-                    variant="subtle"
-                    size="xs"
-                    leftSection={<IconSettings size={14} />}
-                    onClick={() => handleOpenEditSchema(selectedCollection)}
-                    style={{
-                      backgroundColor: "var(--color-bg-card)",
-                      color: "var(--color-text-dimmed)",
-                      border: "1px solid var(--color-border)",
-                      fontSize: "12px",
-                      height: 30,
-                    }}
-                  >
-                    Edit Schema
-                  </Button>
+                  {selectedCollection.name !== "_superusers" && (
+                    <Button
+                      variant="subtle"
+                      size="xs"
+                      leftSection={<IconSettings size={14} />}
+                      onClick={() => handleOpenEditSchema(selectedCollection)}
+                      style={{
+                        backgroundColor: "var(--color-bg-card)",
+                        color: "var(--color-text-dimmed)",
+                        border: "1px solid var(--color-border)",
+                        fontSize: "12px",
+                        height: 30,
+                      }}
+                    >
+                      Edit Schema
+                    </Button>
+                  )}
 
                   <Menu shadow="xl" width={210} position="bottom-end" radius="md">
                     <Menu.Target>

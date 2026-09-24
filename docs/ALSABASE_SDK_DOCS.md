@@ -153,6 +153,23 @@ if (!hasSuperuser) {
 
 // Get current superuser profile
 const adminProfile = await ab.superusers.getMe();
+
+// List all superuser accounts
+const allAdmins = await ab.superusers.getFullList();
+
+// Create a new administrator account
+const newAdmin = await ab.superusers.create({
+  email: "secondary_admin@alsabase.local",
+  password: "strongPassword123"
+});
+
+// Update an administrator account
+await ab.superusers.update(newAdmin.id, {
+  password: "newStrongPassword123"
+});
+
+// Delete an administrator account
+await ab.superusers.delete(newAdmin.id);
 ```
 
 ---

@@ -244,7 +244,7 @@ export async function restoreBackup(filename: string): Promise<{ success: boolea
   return { success: true, message: `Successfully restored backup "${filename}".` };
 }
 
-// Delete backup file (move to .trash)
+// Delete backup file
 export function deleteBackup(filename: string): { success: boolean } {
   initBackupsDir();
   const cleanName = path.basename(filename);
@@ -254,13 +254,7 @@ export function deleteBackup(filename: string): { success: boolean } {
     throw new Error(`Backup file "${cleanName}" not found.`);
   }
 
-  const trashDir = path.resolve(process.cwd(), ".trash");
-  if (!fs.existsSync(trashDir)) {
-    fs.mkdirSync(trashDir, { recursive: true });
-  }
-
-  const trashTarget = path.join(trashDir, `${Date.now()}_backup_${cleanName}`);
-  fs.renameSync(zipPath, trashTarget);
+  fs.unlinkSync(zipPath);
 
   return { success: true };
 }

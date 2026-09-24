@@ -191,13 +191,167 @@ authRouter.get(
   (req: Request, res: Response) => {
     const auth = (req as any).auth as AuthPayload;
     const superuser = db
-      .prepare("SELECT id, email, created_at FROM _superusers WHERE id = ?")
+      .prepare("SELECT id, email, created_at, updated_at FROM _superusers WHERE id = ?")
       .get(auth.id) as any;
     if (!superuser) {
       return res.status(404).json({ error: "Superuser not found" });
     }
-    return res.json({ ...superuser, isSuperuser: true, role: "admin" });
+    return res.json({
+      ...superuser,
+      created: superuser.created_at,
+      updated: superuser.updated_at,
+      isSuperuser: true,
+      role: "admin",
+    });
   },
+);
+
+// List all superusers (Superuser only)
+authRouter.get(
+  "/superusers",
+  requireSuperuser,
+  (_req: Request, res: Response) => {
+    const rows = db
+      .prepare(
+        "SELECT id, email, created_at, updated_at FROM _superusers ORDER BY created_at ASC"
+      )
+      .all() as any[];
+    const items = rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      created: r.created_at,
+      updated: r.updated_at,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+    }));
+    return res.json({ items, total: items.length });
+  }
+);
+
+// Create a new superuser account (Superuser only)
+authRouter.post(
+  "/superusers",
+  requireSuperuser,
+  (req: Request, res: Response) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+    if (password.length < 8) {
+      return res
+        .status(400)
+        .json({ error: "Password must be at least 8 characters long." });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const existing = db
+      .prepare("SELECT id FROM _superusers WHERE email = ?")
+      .get(cleanEmail);
+    if (existing) {
+      return res
+        .status(409)
+        .json({ error: "A superuser with this email already exists." });
+    }
+
+    const id = req.body.id || crypto.randomUUID();
+    const now = new Date().toISOString();
+    const password_hash = hashPassword(password);
+
+    db.prepare(`
+      INSERT INTO _superusers (id, email, password_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, cleanEmail, password_hash, now, now);
+
+    return res.status(201).json({
+      id,
+      email: cleanEmail,
+      created: now,
+      updated: now,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+);
+
+// Update a superuser account (Superuser only)
+authRouter.patch(
+  "/superusers/:id",
+  requireSuperuser,
+  (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const existing = db
+      .prepare("SELECT * FROM _superusers WHERE id = ?")
+      .get(id) as any;
+    if (!existing) {
+      return res.status(404).json({ error: "Superuser not found" });
+    }
+
+    const now = new Date().toISOString();
+    let email = existing.email;
+    let password_hash = existing.password_hash;
+
+    if (req.body.email && req.body.email.trim()) {
+      email = req.body.email.trim().toLowerCase();
+      const duplicate = db
+        .prepare("SELECT id FROM _superusers WHERE email = ? AND id != ?")
+        .get(email, id);
+      if (duplicate) {
+        return res
+          .status(409)
+          .json({ error: "A superuser with this email already exists." });
+      }
+    }
+
+    if (
+      req.body.password &&
+      typeof req.body.password === "string" &&
+      req.body.password.trim() !== ""
+    ) {
+      if (req.body.password.length < 8) {
+        return res
+          .status(400)
+          .json({ error: "Password must be at least 8 characters long." });
+      }
+      password_hash = hashPassword(req.body.password);
+    }
+
+    db.prepare(
+      "UPDATE _superusers SET email = ?, password_hash = ?, updated_at = ? WHERE id = ?"
+    ).run(email, password_hash, now, id);
+
+    return res.json({
+      id,
+      email,
+      created: existing.created_at,
+      updated: now,
+      created_at: existing.created_at,
+      updated_at: now,
+    });
+  }
+);
+
+// Delete a superuser account (Superuser only, prevents deleting the last remaining superuser)
+authRouter.delete(
+  "/superusers/:id",
+  requireSuperuser,
+  (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    const countRow = db
+      .prepare("SELECT COUNT(*) as count FROM _superusers")
+      .get() as { count: number };
+    if (countRow.count <= 1) {
+      return res.status(400).json({
+        error: "Cannot delete the only remaining superuser account.",
+      });
+    }
+
+    const result = db.prepare("DELETE FROM _superusers WHERE id = ?").run(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Superuser not found" });
+    }
+
+    return res.json({ success: true, id });
+  }
 );
 
 // User registration

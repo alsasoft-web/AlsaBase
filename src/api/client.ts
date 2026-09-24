@@ -224,6 +224,30 @@ export const api = {
     return res;
   },
 
+  async getSuperusers() {
+    return request<{ items: any[]; total: number }>("/auth/superusers");
+  },
+
+  async createSuperuser(data: { email: string; password: string }) {
+    return request<any>("/auth/superusers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateSuperuser(id: string, data: { email?: string; password?: string }) {
+    return request<any>(`/auth/superusers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteSuperuser(id: string) {
+    return request<{ success: boolean; id: string }>(`/auth/superusers/${id}`, {
+      method: "DELETE",
+    });
+  },
+
   async loginUser(identity: string, password: string) {
     const res = await request<{ token: string; user: any }>(
       "/auth/users/login",
@@ -834,6 +858,13 @@ export const api = {
     return request<{ success: boolean; filename: string }>("/backups/upload", {
       method: "POST",
       body: JSON.stringify({ name, content, isBase64 }),
+    });
+  },
+
+  async importSqlite(content: string) {
+    return request<{ success: boolean; message: string }>("/backups/import-sqlite", {
+      method: "POST",
+      body: JSON.stringify({ content }),
     });
   },
 

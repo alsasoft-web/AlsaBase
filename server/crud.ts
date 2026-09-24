@@ -221,6 +221,13 @@ export function formatRecordOutput(
   if (!row) return null;
   const formatted: any = { ...row };
 
+  delete formatted.password;
+  delete formatted.password_hash;
+  delete formatted.tokenKey;
+
+  if (!formatted.created && formatted.created_at) formatted.created = formatted.created_at;
+  if (!formatted.updated && formatted.updated_at) formatted.updated = formatted.updated_at;
+
   for (const field of fields) {
     if (field.name === 'password' || field.name === 'tokenKey') {
       delete formatted[field.name];
@@ -313,8 +320,8 @@ collectionsRouter.delete('/:name/truncate', requireSuperuser, (req: Request, res
 
 collectionsRouter.delete('/:name', requireSuperuser, (req: Request, res: Response) => {
   const name = getParam(req.params.name);
-  if (name === 'users') {
-    return res.status(400).json({ error: 'Cannot delete core system collection users' });
+  if (name === 'users' || name === '_superusers') {
+    return res.status(400).json({ error: `Cannot delete core system collection ${name}` });
   }
   const deleted = deleteCollection(name);
   if (!deleted) return res.status(404).json({ error: 'Collection not found' });
@@ -469,9 +476,40 @@ collectionsRouter.post('/:collection/records', (req: Request, res: Response) => 
 
   const id = req.body.id || crypto.randomUUID();
   const now = new Date().toISOString();
-  const isAuth = col.type === 'auth' || col.name === 'users';
+  const isAuth = col.type === 'auth' || col.name === 'users' || col.name === '_superusers';
   const bodyData = { ...req.body };
   delete bodyData.tokenKey;
+
+  // Dedicated handling for _superusers collection
+  if (col.name === '_superusers') {
+    const password = bodyData.password;
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+    }
+    const cleanEmail = String(bodyData.email || '').trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return res.status(400).json({ error: 'A valid email is required.' });
+    }
+    const existing = db.prepare("SELECT id FROM _superusers WHERE email = ?").get(cleanEmail);
+    if (existing) {
+      return res.status(409).json({ error: 'A superuser with this email already exists.' });
+    }
+    const password_hash = hashPassword(password);
+    db.prepare(`
+      INSERT INTO _superusers (id, email, password_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, cleanEmail, password_hash, now, now);
+    const createdRec = {
+      id,
+      email: cleanEmail,
+      created: now,
+      updated: now,
+      created_at: now,
+      updated_at: now,
+    };
+    broadcastRecordEvent('create', '_superusers', createdRec);
+    return res.status(201).json(createdRec);
+  }
 
   // Auto-hash password for auth collections or password fields
   if (bodyData.password && typeof bodyData.password === 'string' && bodyData.password.trim() !== '') {
@@ -549,6 +587,34 @@ collectionsRouter.patch('/:collection/records/:id', (req: Request, res: Response
   const isAuth = col.type === 'auth' || col.name === 'users';
   const bodyData = { ...req.body };
   const now = new Date().toISOString();
+
+  // Dedicated handling for _superusers collection update
+  if (col.name === '_superusers') {
+    const existing = db.prepare("SELECT * FROM _superusers WHERE id = ?").get(recordId) as any;
+    if (!existing) return res.status(404).json({ error: 'Superuser not found' });
+    let email = existing.email;
+    let password_hash = existing.password_hash;
+    if (bodyData.email && bodyData.email.trim()) {
+      email = bodyData.email.trim().toLowerCase();
+      const duplicate = db.prepare("SELECT id FROM _superusers WHERE email = ? AND id != ?").get(email, recordId);
+      if (duplicate) return res.status(409).json({ error: 'A superuser with this email already exists.' });
+    }
+    if (bodyData.password && typeof bodyData.password === 'string' && bodyData.password.trim() !== '') {
+      if (bodyData.password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+      password_hash = hashPassword(bodyData.password);
+    }
+    db.prepare("UPDATE _superusers SET email = ?, password_hash = ?, updated_at = ? WHERE id = ?").run(email, password_hash, now, recordId);
+    const updatedRec = {
+      id: recordId,
+      email,
+      created: existing.created_at,
+      updated: now,
+      created_at: existing.created_at,
+      updated_at: now,
+    };
+    broadcastRecordEvent('update', '_superusers', updatedRec);
+    return res.json(updatedRec);
+  }
 
   // If password is being updated, hash it; if empty/omitted, don't overwrite
   if (bodyData.password !== undefined) {
@@ -633,7 +699,18 @@ collectionsRouter.delete('/:collection/records/:id', (req: Request, res: Respons
     return res.status(403).json({ error: 'Access denied to delete record', code: 403 });
   }
 
-  const isAuth = col.type === 'auth' || col.name === 'users';
+  // Dedicated handling for _superusers deletion
+  if (col.name === '_superusers') {
+    const countRow = db.prepare("SELECT COUNT(*) as count FROM _superusers").get() as { count: number };
+    if (countRow.count <= 1) {
+      return res.status(400).json({ error: 'Cannot delete the only remaining superuser account.' });
+    }
+    db.prepare("DELETE FROM _superusers WHERE id = ?").run(recordId);
+    broadcastRecordEvent('delete', '_superusers', { id: recordId });
+    return res.json({ success: true, id: recordId });
+  }
+
+  const isAuth = col.type === 'auth' || col.name === 'users' || col.name === '_superusers';
   const formattedExisting = formatRecordOutput(col.fields, existing, auth, isAuth);
   db.prepare(`DELETE FROM "${col.name}" WHERE id = ?`).run(recordId);
   deleteRecordFiles(col.name, recordId);

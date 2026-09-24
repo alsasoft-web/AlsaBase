@@ -122,7 +122,7 @@ Refreshes an active session token and returns the current user profile.
 
 ---
 
-### 🛡️ Superuser / Admin Authentication (`/api/auth/superusers/...`)
+### Superuser / Admin Authentication & Management (`/api/auth/superusers/...`)
 
 #### `POST /api/auth/superusers/login` (Alias: `/api/admins/auth-with-password`)
 
@@ -150,6 +150,58 @@ Creates the initial superuser account (only available when no superusers exist).
 #### `GET /api/auth/superusers/me`
 
 Returns current authenticated administrator profile.
+
+- **Headers**: `Authorization: Bearer <SUPERUSER_TOKEN>`
+
+#### `GET /api/auth/superusers`
+
+Returns a list of all administrator accounts.
+
+- **Headers**: `Authorization: Bearer <SUPERUSER_TOKEN>`
+- **Response**:
+  ```json
+  {
+    "items": [
+      {
+        "id": "admin_1",
+        "email": "admin@alsabase.local",
+        "created": "2026-09-24T10:00:00.000Z",
+        "updated": "2026-09-24T10:00:00.000Z"
+      }
+    ],
+    "total": 1
+  }
+  ```
+
+#### `POST /api/auth/superusers`
+
+Creates a new administrator account.
+
+- **Headers**: `Authorization: Bearer <SUPERUSER_TOKEN>`
+- **Body**:
+  ```json
+  {
+    "email": "secondary_admin@alsabase.local",
+    "password": "strongPassword123"
+  }
+  ```
+
+#### `PATCH /api/auth/superusers/:id`
+
+Updates an existing administrator account's email or password.
+
+- **Headers**: `Authorization: Bearer <SUPERUSER_TOKEN>`
+- **Body**:
+  ```json
+  {
+    "email": "new_email@alsabase.local",
+    "password": "updatedPassword123"
+  }
+  ```
+
+#### `DELETE /api/auth/superusers/:id`
+
+Deletes an administrator account. Prevents deletion if it is the only remaining superuser.
 
 - **Headers**: `Authorization: Bearer <SUPERUSER_TOKEN>`
 

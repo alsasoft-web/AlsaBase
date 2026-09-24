@@ -8,6 +8,8 @@ import {
   ActionIcon,
   Modal,
   TextInput,
+  PasswordInput,
+  Avatar,
   NumberInput,
   Switch,
   Select,
@@ -26,6 +28,8 @@ import {
   IconSettings,
   IconNetwork,
   IconShieldLock,
+  IconUserShield,
+  IconEdit,
   IconGauge,
   IconMail,
   IconDatabase,
@@ -115,16 +119,146 @@ export const SettingsView: React.FC = () => {
   const [backupIncludeHooks, setBackupIncludeHooks] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const sqliteInputRef = useRef<HTMLInputElement>(null);
 
   // Email Test Modal State
   const [testEmailModalOpen, setTestEmailModalOpen] = useState(false);
   const [testEmailRecipient, setTestEmailRecipient] = useState("");
   const [sendingTestEmail, setSendingTestEmail] = useState(false);
 
+  // Superusers state
+  const [superusers, setSuperusers] = useState<any[]>([]);
+  const [loadingSuperusers, setLoadingSuperusers] = useState(false);
+  const [createSuperuserModalOpen, setCreateSuperuserModalOpen] = useState(false);
+  const [newSuperuserEmail, setNewSuperuserEmail] = useState("");
+  const [newSuperuserPassword, setNewSuperuserPassword] = useState("");
+  const [newSuperuserPasswordConfirm, setNewSuperuserPasswordConfirm] = useState("");
+  const [creatingSuperuser, setCreatingSuperuser] = useState(false);
+  const [editingSuperuser, setEditingSuperuser] = useState<any | null>(null);
+  const [editSuperuserEmail, setEditSuperuserEmail] = useState("");
+  const [editSuperuserPassword, setEditSuperuserPassword] = useState("");
+  const [updatingSuperuser, setUpdatingSuperuser] = useState(false);
+
   // Active email template selection
   const [activeEmailTemplate, setActiveEmailTemplate] = useState<
     "passwordReset" | "verification" | "confirmEmailChange" | "otp"
   >("passwordReset");
+
+  // Load Superusers list
+  const loadSuperusersList = async () => {
+    setLoadingSuperusers(true);
+    try {
+      const res = await api.getSuperusers();
+      setSuperusers(res.items || []);
+    } catch {
+      setSuperusers([]);
+    } finally {
+      setLoadingSuperusers(false);
+    }
+  };
+
+  const handleCreateSuperuser = async () => {
+    if (!newSuperuserEmail.trim()) {
+      notifications.show({ title: "Email required", message: "Please enter a valid email address.", color: "red" });
+      return;
+    }
+    if (!newSuperuserPassword || newSuperuserPassword.length < 8) {
+      notifications.show({ title: "Invalid password", message: "Password must be at least 8 characters long.", color: "red" });
+      return;
+    }
+    if (newSuperuserPassword !== newSuperuserPasswordConfirm) {
+      notifications.show({ title: "Passwords mismatch", message: "Passwords do not match.", color: "red" });
+      return;
+    }
+
+    setCreatingSuperuser(true);
+    try {
+      await api.createSuperuser({ email: newSuperuserEmail.trim(), password: newSuperuserPassword });
+      setCreateSuperuserModalOpen(false);
+      setNewSuperuserEmail("");
+      setNewSuperuserPassword("");
+      setNewSuperuserPasswordConfirm("");
+      loadSuperusersList();
+      notifications.show({
+        title: "Superuser Created",
+        message: "New administrator account created successfully.",
+        color: "teal",
+      });
+    } catch (err: any) {
+      notifications.show({ title: "Creation Failed", message: err.message, color: "red" });
+    } finally {
+      setCreatingSuperuser(false);
+    }
+  };
+
+  const handleUpdateSuperuser = async () => {
+    if (!editingSuperuser) return;
+    if (!editSuperuserEmail.trim()) {
+      notifications.show({ title: "Email required", message: "Please enter an email address.", color: "red" });
+      return;
+    }
+    if (editSuperuserPassword && editSuperuserPassword.length < 8) {
+      notifications.show({ title: "Invalid password", message: "Password must be at least 8 characters long.", color: "red" });
+      return;
+    }
+
+    setUpdatingSuperuser(true);
+    try {
+      await api.updateSuperuser(editingSuperuser.id, {
+        email: editSuperuserEmail.trim(),
+        password: editSuperuserPassword.trim() || undefined,
+      });
+      setEditingSuperuser(null);
+      setEditSuperuserEmail("");
+      setEditSuperuserPassword("");
+      loadSuperusersList();
+      notifications.show({
+        title: "Superuser Updated",
+        message: "Administrator account details updated successfully.",
+        color: "teal",
+      });
+    } catch (err: any) {
+      notifications.show({ title: "Update Failed", message: err.message, color: "red" });
+    } finally {
+      setUpdatingSuperuser(false);
+    }
+  };
+
+  const handleDeleteSuperuser = (id: string, email: string) => {
+    if (superusers.length <= 1) {
+      notifications.show({
+        title: "Cannot Delete",
+        message: "Cannot delete the only remaining superuser account.",
+        color: "red",
+      });
+      return;
+    }
+
+    modals.openConfirmModal({
+      title: "Delete Administrator",
+      centered: true,
+      children: (
+        <Text size="sm">
+          Are you sure you want to delete superuser <strong>{email}</strong>? This action cannot be undone.
+        </Text>
+      ),
+      labels: { confirm: "Delete", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: async () => {
+        try {
+          await api.deleteSuperuser(id);
+          loadSuperusersList();
+          notifications.show({
+            title: "Superuser Deleted",
+            message: `Administrator ${email} deleted successfully.`,
+            color: "teal",
+          });
+        } catch (err: any) {
+          notifications.show({ title: "Delete Failed", message: err.message, color: "red" });
+        }
+      },
+    });
+  };
 
   // Load Settings and IP Info
   const loadSettings = async () => {
@@ -179,6 +313,7 @@ export const SettingsView: React.FC = () => {
     loadSettings();
     loadClientIpInfo();
     loadBackupsList();
+    loadSuperusersList();
   }, []);
 
   const handleSaveSettings = async () => {
@@ -338,6 +473,62 @@ export const SettingsView: React.FC = () => {
     if (backupFileInputRef.current) backupFileInputRef.current.value = "";
   };
 
+  // Import raw SQLite file
+  const handleSqliteImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    modals.openConfirmModal({
+      title: "Import SQLite Database",
+      centered: true,
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Replace the live database with <b>{file.name}</b>?
+          </Text>
+          <Text size="xs" c="dimmed">
+            The server will restart after the import. All current data will be
+            overwritten. Make sure you have a backup first.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: "Import & Restart", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: () => {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const arrayBuffer = reader.result as ArrayBuffer;
+          const bytes = new Uint8Array(arrayBuffer);
+          let binary = "";
+          for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          const base64 = btoa(binary);
+          try {
+            await api.importSqlite(base64);
+            notifications.show({
+              title: "Import Successful",
+              message: "Database imported. Server is restarting — refresh in a few seconds.",
+              color: "teal",
+              autoClose: 8000,
+            });
+          } catch (err: any) {
+            notifications.show({
+              title: "Import Failed",
+              message: err.message,
+              color: "red",
+            });
+          }
+        };
+        reader.readAsArrayBuffer(file);
+        if (sqliteInputRef.current) sqliteInputRef.current.value = "";
+      },
+      onCancel: () => {
+        if (sqliteInputRef.current) sqliteInputRef.current.value = "";
+      },
+    });
+  };
+
   // Send Test Email
   const handleSendTestEmail = async () => {
     if (!testEmailRecipient.trim()) return;
@@ -489,6 +680,32 @@ export const SettingsView: React.FC = () => {
           </Button>
 
           <Button
+            variant={activeTab === "admins" ? "filled" : "subtle"}
+            size="xs"
+            leftSection={<IconUserShield size={14} />}
+            onClick={() => handleTabChange("admins")}
+            style={{
+              backgroundColor:
+                activeTab === "admins"
+                  ? "var(--color-neon-dim)"
+                  : "transparent",
+              color:
+                activeTab === "admins"
+                  ? "var(--color-neon-primary)"
+                  : "var(--color-text-dimmed)",
+              border:
+                activeTab === "admins"
+                  ? "1px solid var(--color-border-glow)"
+                  : "1px solid transparent",
+              fontWeight: 600,
+              fontSize: "12px",
+              height: 28,
+            }}
+          >
+            Administrators ({superusers.length})
+          </Button>
+
+          <Button
             variant={activeTab === "backups" ? "filled" : "subtle"}
             size="xs"
             leftSection={<IconDatabase size={14} />}
@@ -538,11 +755,12 @@ export const SettingsView: React.FC = () => {
             <ActionIcon
               size="sm"
               variant="default"
-              loading={loading}
+              loading={loading || loadingSuperusers}
               onClick={() => {
                 loadSettings();
                 loadClientIpInfo();
                 loadBackupsList();
+                loadSuperusersList();
               }}
               style={{ height: 28, width: 28 }}
             >
@@ -1733,6 +1951,16 @@ export const SettingsView: React.FC = () => {
                         Upload Backup (.zip)
                       </Button>
 
+                      <Button
+                        size="xs"
+                        variant="default"
+                        color="orange"
+                        leftSection={<IconDatabase size={13} />}
+                        onClick={() => sqliteInputRef.current?.click()}
+                      >
+                        Import SQLite
+                      </Button>
+
                       <ActionIcon
                         size="sm"
                         variant="default"
@@ -1749,6 +1977,13 @@ export const SettingsView: React.FC = () => {
                         style={{ display: "none" }}
                         accept=".zip"
                         onChange={handleBackupFileUpload}
+                      />
+                      <input
+                        type="file"
+                        ref={sqliteInputRef}
+                        style={{ display: "none" }}
+                        accept=".sqlite,.sqlite3,.db"
+                        onChange={handleSqliteImport}
                       />
                     </Group>
                   </Group>
@@ -1817,9 +2052,19 @@ export const SettingsView: React.FC = () => {
                                 <ActionIcon
                                   size="xs"
                                   variant="subtle"
-                                  component="a"
-                                  href={`/api/backups/${encodeURIComponent(item.name)}/download`}
-                                  download
+                                  onClick={() => {
+                                    const token =
+                                      localStorage.getItem("alsabase_token") ||
+                                      localStorage.getItem("AlsaBase_token") ||
+                                      "";
+                                    const url = `/api/backups/${encodeURIComponent(item.name)}/download?token=${encodeURIComponent(token)}`;
+                                    const a = document.createElement("a");
+                                    a.href = url;
+                                    a.download = item.name;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    a.remove();
+                                  }}
                                 >
                                   <IconDownload size={13} />
                                 </ActionIcon>
@@ -1877,9 +2122,313 @@ export const SettingsView: React.FC = () => {
                 </Card>
               </Stack>
             )}
+            {/* TAB: ADMINISTRATORS (SUPERUSERS) */}
+            {activeTab === "admins" && (
+              <Stack gap="lg">
+                <Card
+                  withBorder
+                  padding="lg"
+                  radius="md"
+                  style={{ backgroundColor: "var(--color-bg-card)" }}
+                >
+                  <Group justify="space-between" mb="lg">
+                    <div>
+                      <Group gap="xs">
+                        <IconUserShield
+                          size={18}
+                          color="var(--color-neon-primary)"
+                        />
+                        <Text fw={700} size="md">
+                          Superuser Administrators
+                        </Text>
+                        <Badge size="sm" variant="filled" color="green">
+                          {superusers.length} Active
+                        </Badge>
+                      </Group>
+                      <Text size="xs" c="dimmed" mt={3}>
+                        Manage superusers with full access to the database, system settings, and API routes.
+                      </Text>
+                    </div>
+
+                    <Button
+                      size="xs"
+                      leftSection={<IconPlus size={14} />}
+                      onClick={() => {
+                        setNewSuperuserEmail("");
+                        setNewSuperuserPassword("");
+                        setNewSuperuserPasswordConfirm("");
+                        setCreateSuperuserModalOpen(true);
+                      }}
+                      style={{
+                        backgroundColor: "var(--color-neon-primary)",
+                        color: isDark ? "#052e16" : "#ffffff",
+                        fontWeight: 700,
+                      }}
+                    >
+                      New Administrator
+                    </Button>
+                  </Group>
+
+                  <Table
+                    verticalSpacing="sm"
+                    horizontalSpacing="md"
+                    highlightOnHover
+                    style={{ fontSize: "13px" }}
+                  >
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th style={{ color: "var(--color-text-dimmed)" }}>
+                          Administrator
+                        </Table.Th>
+                        <Table.Th style={{ color: "var(--color-text-dimmed)" }}>
+                          Account ID
+                        </Table.Th>
+                        <Table.Th style={{ color: "var(--color-text-dimmed)" }}>
+                          Created
+                        </Table.Th>
+                        <Table.Th
+                          style={{
+                            color: "var(--color-text-dimmed)",
+                            textAlign: "right",
+                          }}
+                        >
+                          Actions
+                        </Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {superusers.map((su) => (
+                        <Table.Tr key={su.id}>
+                          <Table.Td>
+                            <Group gap="sm" wrap="nowrap">
+                              <Avatar
+                                size={32}
+                                radius="xl"
+                                style={{
+                                  backgroundColor: "var(--color-neon-dim)",
+                                  color: "var(--color-neon-primary)",
+                                  fontWeight: 700,
+                                  border: "1px solid var(--color-border-glow)",
+                                }}
+                              >
+                                {(su.email?.[0] || "A").toUpperCase()}
+                              </Avatar>
+                              <div>
+                                <Text size="sm" fw={600}>
+                                  {su.email}
+                                </Text>
+                                <Badge
+                                  size="xs"
+                                  variant="light"
+                                  color="teal"
+                                  style={{ marginTop: 2 }}
+                                >
+                                  Superuser
+                                </Badge>
+                              </div>
+                            </Group>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text
+                              size="xs"
+                              style={{
+                                fontFamily: "var(--font-mono)",
+                                color: "var(--color-text-dimmed)",
+                              }}
+                            >
+                              {su.id}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="xs" c="dimmed">
+                              {su.created
+                                ? new Date(su.created).toLocaleString()
+                                : "N/A"}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td style={{ textAlign: "right" }}>
+                            <Group gap={6} justify="flex-end">
+                              <Tooltip
+                                label="Edit Superuser"
+                                withArrow
+                                position="top"
+                              >
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  onClick={() => {
+                                    setEditingSuperuser(su);
+                                    setEditSuperuserEmail(su.email);
+                                    setEditSuperuserPassword("");
+                                  }}
+                                >
+                                  <IconEdit size={14} color="#38bdf8" />
+                                </ActionIcon>
+                              </Tooltip>
+
+                              <Tooltip
+                                label="Delete Superuser"
+                                withArrow
+                                position="top"
+                              >
+                                <ActionIcon
+                                  size="sm"
+                                  variant="subtle"
+                                  color="red"
+                                  disabled={superusers.length <= 1}
+                                  onClick={() =>
+                                    handleDeleteSuperuser(su.id, su.email)
+                                  }
+                                >
+                                  <IconTrash size={14} />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+
+                      {superusers.length === 0 && (
+                        <Table.Tr>
+                          <Table.Td
+                            colSpan={4}
+                            style={{ textAlign: "center", padding: "24px" }}
+                          >
+                            <Text size="xs" c="dimmed">
+                              No administrator accounts found.
+                            </Text>
+                          </Table.Td>
+                        </Table.Tr>
+                      )}
+                    </Table.Tbody>
+                  </Table>
+                </Card>
+              </Stack>
+            )}
           </Stack>
         )}
       </div>
+
+      {/* MODAL: CREATE SUPERUSER */}
+      <Modal
+        opened={createSuperuserModalOpen}
+        onClose={() => setCreateSuperuserModalOpen(false)}
+        title="Create New Administrator"
+        centered
+        styles={{
+          header: {
+            backgroundColor: "var(--color-bg-card)",
+            borderBottom: "1px solid var(--color-border)",
+          },
+          content: {
+            backgroundColor: "var(--color-bg-card)",
+            border: "1px solid var(--color-border)",
+          },
+        }}
+      >
+        <Stack gap="md">
+          <TextInput
+            label="Administrator Email"
+            placeholder="admin@yourdomain.com"
+            value={newSuperuserEmail}
+            onChange={(e) => setNewSuperuserEmail(e.target.value)}
+            required
+            data-autofocus
+          />
+          <PasswordInput
+            label="Password"
+            description="Minimum 8 characters"
+            placeholder="Choose a strong password"
+            value={newSuperuserPassword}
+            onChange={(e) => setNewSuperuserPassword(e.target.value)}
+            required
+          />
+          <PasswordInput
+            label="Confirm Password"
+            placeholder="Repeat password"
+            value={newSuperuserPasswordConfirm}
+            onChange={(e) => setNewSuperuserPasswordConfirm(e.target.value)}
+            required
+          />
+          <Group justify="flex-end" gap="xs" mt="sm">
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => setCreateSuperuserModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              loading={creatingSuperuser}
+              onClick={handleCreateSuperuser}
+              style={{
+                backgroundColor: "var(--color-neon-primary)",
+                color: "#052e16",
+                fontWeight: 700,
+              }}
+            >
+              Create Account
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* MODAL: EDIT SUPERUSER */}
+      <Modal
+        opened={Boolean(editingSuperuser)}
+        onClose={() => setEditingSuperuser(null)}
+        title="Edit Administrator"
+        centered
+        styles={{
+          header: {
+            backgroundColor: "var(--color-bg-card)",
+            borderBottom: "1px solid var(--color-border)",
+          },
+          content: {
+            backgroundColor: "var(--color-bg-card)",
+            border: "1px solid var(--color-border)",
+          },
+        }}
+      >
+        <Stack gap="md">
+          <TextInput
+            label="Administrator Email"
+            placeholder="admin@yourdomain.com"
+            value={editSuperuserEmail}
+            onChange={(e) => setEditSuperuserEmail(e.target.value)}
+            required
+          />
+          <PasswordInput
+            label="New Password (Optional)"
+            description="Leave blank to keep current password"
+            placeholder="Enter new password"
+            value={editSuperuserPassword}
+            onChange={(e) => setEditSuperuserPassword(e.target.value)}
+          />
+          <Group justify="flex-end" gap="xs" mt="sm">
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => setEditingSuperuser(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="xs"
+              loading={updatingSuperuser}
+              onClick={handleUpdateSuperuser}
+              style={{
+                backgroundColor: "var(--color-neon-primary)",
+                color: "#052e16",
+                fontWeight: 700,
+              }}
+            >
+              Save Changes
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       {/* MODAL: CREATE MANUAL BACKUP */}
       <Modal

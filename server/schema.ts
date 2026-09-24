@@ -104,7 +104,7 @@ export function listCollections(): CollectionDef[] {
   const rows = db.prepare('SELECT * FROM _collections ORDER BY created_at ASC').all() as any[];
   return rows.map((r) => {
     const rulesObj = JSON.parse(r.rules_json || '{}');
-    const isAuth = r.name === 'users' || rulesObj.type === 'auth';
+    const isAuth = r.name === 'users' || r.name === '_superusers' || rulesObj.type === 'auth';
     const fields = (JSON.parse(r.schema_json || '[]') as FieldDef[]).filter(
       (f) => f.name !== 'tokenKey'
     );
@@ -135,7 +135,7 @@ export function getCollection(nameOrId: string): CollectionDef | null {
   const row = db.prepare('SELECT * FROM _collections WHERE id = ? OR name = ?').get(nameOrId, nameOrId) as any;
   if (!row) return null;
   const rulesObj = JSON.parse(row.rules_json || '{}');
-  const isAuth = row.name === 'users' || rulesObj.type === 'auth';
+  const isAuth = row.name === 'users' || row.name === '_superusers' || rulesObj.type === 'auth';
   const fields = (JSON.parse(row.schema_json || '[]') as FieldDef[]).filter(
     (f) => f.name !== 'tokenKey'
   );
@@ -412,6 +412,35 @@ export function initDefaultCollections() {
         }
       });
       console.log('[Schema] Initialized default "users" auth collection.');
+    }
+
+    const existingSuperusers = db.prepare("SELECT id FROM _collections WHERE name = '_superusers'").get();
+    if (!existingSuperusers) {
+      const colId = '_system_superusers';
+      const now = new Date().toISOString();
+      const schema: FieldDef[] = [
+        { name: 'email', type: 'email', required: true, unique: true },
+        { name: 'password', type: 'text', required: true, hidden: true }
+      ];
+      const rulesObj = {
+        list: 'admin',
+        view: 'admin',
+        create: 'admin',
+        update: 'admin',
+        delete: 'admin',
+        type: 'auth',
+        options: {
+          allowEmailAuth: true,
+          allowOAuth2Auth: false,
+          allowUsernameAuth: false,
+          sendEmailAlert: false
+        }
+      };
+      db.prepare(`
+        INSERT OR IGNORE INTO _collections (id, name, type, schema_json, rules_json, created_at, updated_at)
+        VALUES (?, ?, 'auth', ?, ?, ?, ?)
+      `).run(colId, '_superusers', JSON.stringify(schema), JSON.stringify(rulesObj), now, now);
+      console.log('[Schema] Initialized system "_superusers" auth collection.');
     }
   } catch (err: any) {
     console.error('[Schema] Error initializing default collections:', err?.message || err);

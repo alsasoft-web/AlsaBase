@@ -120,6 +120,61 @@ export class SuperuserService extends BaseService {
     });
     return true;
   }
+
+  /**
+   * Returns a list of all superusers (Superuser only)
+   */
+  async getFullList(options?: CommonOptions): Promise<SuperuserModel[]> {
+    const res = await this.send<{ items: SuperuserModel[]; total: number }>(
+      "/api/auth/superusers",
+      {
+        method: "GET",
+        ...options,
+      }
+    );
+    return res.items || [];
+  }
+
+  /**
+   * Creates a new superuser account (Superuser only)
+   */
+  async create(
+    data: { email: string; password: string },
+    options?: CommonOptions
+  ): Promise<SuperuserModel> {
+    return this.send<SuperuserModel>("/api/auth/superusers", {
+      method: "POST",
+      body: data,
+      ...options,
+    });
+  }
+
+  /**
+   * Updates an existing superuser account (Superuser only)
+   */
+  async update(
+    id: string,
+    data: { email?: string; password?: string },
+    options?: CommonOptions
+  ): Promise<SuperuserModel> {
+    return this.send<SuperuserModel>(`/api/auth/superusers/${id}`, {
+      method: "PATCH",
+      body: data,
+      ...options,
+    });
+  }
+
+  /**
+   * Deletes a superuser account (Superuser only)
+   */
+  async delete(id: string, options?: CommonOptions): Promise<boolean> {
+    await this.send(`/api/auth/superusers/${id}`, {
+      method: "DELETE",
+      ...options,
+    });
+    return true;
+  }
 }
 
 export type AdminService = SuperuserService;
+

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { requireSuperuser } from "./auth";
 import { getCollection } from "./schema";
-import { db } from "./db";
+import { db, DB_PATH } from "./db";
 import {
   getAllSettings,
   updateAllSettings,
@@ -361,6 +361,26 @@ backupsRouter.post("/upload", requireSuperuser, (req: Request, res: Response) =>
     }
 
     res.status(201).json({ success: true, filename: cleanName });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 12. Import raw SQLite file
+backupsRouter.post("/import-sqlite", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const { content } = req.body;
+    if (!content) {
+      return res.status(400).json({ error: "Base64 SQLite content required" });
+    }
+
+    // Close DB, overwrite the file, then restart so Node re-opens it cleanly
+    db.close();
+    fs.writeFileSync(DB_PATH, Buffer.from(content, "base64"));
+
+    // Respond before exiting so the client knows it succeeded
+    res.json({ success: true, message: "SQLite database imported. Server is restarting." });
+    setTimeout(() => process.exit(0), 300);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
