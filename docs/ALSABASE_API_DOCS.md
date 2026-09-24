@@ -526,6 +526,7 @@ Cancels a running CLI script or hook command process.
 - `POST /api/backups`: Generates an instant full system backup archive (database + uploads).
 - `GET /api/backups/:filename/download`: Downloads backup archive.
 - `POST /api/backups/:filename/restore`: Restores system from backup archive.
+- `POST /api/backups/import-sqlite`: Imports a raw SQLite database file (`.sqlite`/`.db`), replaces the active database, and restarts the server process.
 
 ---
 

@@ -20,7 +20,6 @@ import {
   SegmentedControl,
   useComputedColorScheme,
 } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
   IconPlus,
@@ -52,8 +51,10 @@ import {
 } from "../../api/client";
 import { NpmPackagesModal } from "../NpmPackagesModal";
 import { VSCodeFileTree } from "../VSCodeFileTree";
+import { FileIcon } from "../FileIcon";
 import { MediaViewer, isMediaFilename } from "../MediaViewer";
 import { copyToClipboard } from "../../utils/clipboard";
+import { openHoldToConfirmModal } from "../HoldToConfirmModal";
 
 interface BodyFieldRow {
   id: string;
@@ -774,7 +775,7 @@ export const HooksView: React.FC = () => {
   };
 
   const handleDeleteFile = (filename: string) => {
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Move File to Trash",
       centered: true,
       children: (

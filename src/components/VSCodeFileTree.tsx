@@ -9,7 +9,6 @@ import {
   Button,
   Modal,
 } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
   IconChevronRight,
@@ -29,6 +28,8 @@ import {
   IconLink,
 } from "@tabler/icons-react";
 import { FileIcon } from "./FileIcon";
+import { copyToClipboard } from "../utils/clipboard";
+import { openHoldToConfirmModal } from "./HoldToConfirmModal";
 
 export interface TreeFileItem {
   name: string;
@@ -779,7 +780,7 @@ export const VSCodeFileTree: React.FC<VSCodeFileTreeProps> = ({
 
   const handleConfirmDeleteFolder = (folderPath: string) => {
     if (!onDeleteFolder) return;
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Delete Folder",
       centered: true,
       children: (
@@ -1602,8 +1603,8 @@ export const VSCodeFileTree: React.FC<VSCodeFileTreeProps> = ({
               )}
               <button
                 className="vscode-ctx-item"
-                onClick={() => {
-                  navigator.clipboard.writeText(contextMenu.node!.fullPath);
+                onClick={async () => {
+                  await copyToClipboard(contextMenu.node!.fullPath || "");
                   setContextMenu(null);
                   notifications.show({
                     title: "Path Copied",
@@ -1731,8 +1732,8 @@ export const VSCodeFileTree: React.FC<VSCodeFileTreeProps> = ({
               )}
               <button
                 className="vscode-ctx-item"
-                onClick={() => {
-                  navigator.clipboard.writeText(contextMenu.node!.fullPath);
+                onClick={async () => {
+                  await copyToClipboard(contextMenu.node!.fullPath || "");
                   setContextMenu(null);
                   notifications.show({
                     title: "Path Copied",

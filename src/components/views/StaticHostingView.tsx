@@ -13,7 +13,6 @@ import {
   Tooltip,
   useComputedColorScheme,
 } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
   IconPlus,
@@ -27,6 +26,7 @@ import { api } from "../../api/client";
 import { VSCodeFileTree } from "../VSCodeFileTree";
 import { FileIcon } from "../FileIcon";
 import { MediaViewer, isMediaFilename } from "../MediaViewer";
+import { openHoldToConfirmModal } from "../HoldToConfirmModal";
 
 function getLanguage(filename: string | null): string {
   if (!filename) return "html";
@@ -377,7 +377,7 @@ export const StaticHostingView: React.FC = () => {
   };
 
   const handleDeleteFile = (filename: string) => {
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Move File to Trash",
       centered: true,
       children: (

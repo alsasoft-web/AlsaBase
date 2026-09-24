@@ -43,9 +43,9 @@ import {
   IconCode,
   IconChevronRight,
   IconArrowDownLeft,
+  IconFileText,
 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
-import { modals } from "@mantine/modals";
 import {
   api,
   LogEntry,
@@ -53,6 +53,7 @@ import {
   onRealtimeStatus,
 } from "../../api/client";
 import { copyToClipboard } from "../../utils/clipboard";
+import { openHoldToConfirmModal } from "../HoldToConfirmModal";
 
 export const LogsView: React.FC = () => {
   const computedColorScheme = useComputedColorScheme("dark", {
@@ -284,7 +285,7 @@ export const LogsView: React.FC = () => {
   };
 
   const handleClearLogs = () => {
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Clear All Activity Logs",
       centered: true,
       children: (
@@ -322,7 +323,7 @@ export const LogsView: React.FC = () => {
     const count = selectAllAcrossPages ? logTotal : selectedRowIds.length;
     if (count === 0) return;
 
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Delete Selected Logs",
       centered: true,
       children: (
@@ -664,6 +665,103 @@ export const LogsView: React.FC = () => {
       }
     }
     return curl;
+  };
+
+  // Build full log diagnostic report containing request, response, metadata, error and stack trace
+  const buildFullLogReport = (lg: LogEntry): string => {
+    let meta: any = null;
+    if (lg.metadata_json) {
+      try {
+        meta = JSON.parse(lg.metadata_json);
+      } catch {
+        meta = { raw: lg.metadata_json };
+      }
+    }
+
+    const { response, ...reqData } = meta || {};
+
+    const lines: string[] = [
+      "================================================================================",
+      "ALSABASE FULL LOG DIAGNOSTIC REPORT",
+      "================================================================================",
+      `Event ID:        ${lg.id}`,
+      `Timestamp (UTC): ${new Date(lg.timestamp).toISOString()}`,
+      `Timestamp (Loc): ${new Date(lg.timestamp).toLocaleString()}`,
+      `Level:           ${lg.level || "INFO"}`,
+      `Method:          ${lg.method || "GET"}`,
+      `Path:            ${lg.path || "/"}`,
+      `HTTP Status:     ${lg.status || 200}`,
+      `Duration:        ${lg.duration_ms !== undefined && lg.duration_ms !== null ? `${lg.duration_ms}ms` : "N/A"}`,
+    ];
+
+    if (meta?.ip) {
+      lines.push(`Client IP:       ${meta.ip}`);
+    }
+    if (meta?.userAgent || meta?.["user-agent"]) {
+      lines.push(`User-Agent:      ${meta.userAgent || meta["user-agent"]}`);
+    }
+    if (meta?.userId || meta?.user?.id) {
+      lines.push(`User ID:         ${meta.userId || meta.user?.id}`);
+    }
+    if (meta?.userEmail || meta?.user?.email) {
+      lines.push(`User Email:      ${meta.userEmail || meta.user?.email}`);
+    }
+    if (meta?.auth) {
+      lines.push(`Auth Context:    ${typeof meta.auth === "object" ? JSON.stringify(meta.auth) : String(meta.auth)}`);
+    }
+
+    if (lg.error_message) {
+      lines.push("");
+      lines.push("--------------------------------------------------------------------------------");
+      lines.push("ERROR / MESSAGE");
+      lines.push("--------------------------------------------------------------------------------");
+      lines.push(lg.error_message);
+    }
+
+    if (lg.stack_trace) {
+      lines.push("");
+      lines.push("--------------------------------------------------------------------------------");
+      lines.push("FULL STACK TRACE");
+      lines.push("--------------------------------------------------------------------------------");
+      lines.push(lg.stack_trace);
+    }
+
+    lines.push("");
+    lines.push("--------------------------------------------------------------------------------");
+    lines.push("HTTP REQUEST CONTEXT & PAYLOAD");
+    lines.push("--------------------------------------------------------------------------------");
+    if (reqData && Object.keys(reqData).length > 0) {
+      lines.push(JSON.stringify(reqData, null, 2));
+    } else {
+      lines.push("(No request payload recorded)");
+    }
+
+    lines.push("");
+    lines.push("--------------------------------------------------------------------------------");
+    lines.push("HTTP RESPONSE PAYLOAD");
+    lines.push("--------------------------------------------------------------------------------");
+    if (response !== undefined && response !== null) {
+      lines.push(typeof response === "object" ? JSON.stringify(response, null, 2) : String(response));
+    } else if (lg.error_message) {
+      lines.push(JSON.stringify({ status: lg.status || 500, error: lg.error_message }, null, 2));
+    } else {
+      lines.push(JSON.stringify({ status: lg.status || 200, message: "OK" }, null, 2));
+    }
+
+    if (lg.metadata_json) {
+      lines.push("");
+      lines.push("--------------------------------------------------------------------------------");
+      lines.push("RAW METADATA JSON");
+      lines.push("--------------------------------------------------------------------------------");
+      try {
+        lines.push(JSON.stringify(JSON.parse(lg.metadata_json), null, 2));
+      } catch {
+        lines.push(lg.metadata_json);
+      }
+    }
+
+    lines.push("================================================================================");
+    return lines.join("\n");
   };
 
   // Metrics summary calculations
@@ -1679,18 +1777,44 @@ export const LogsView: React.FC = () => {
                         </Stack>
                       </Table.Td>
 
-                      {/* Action Chevron */}
+                      {/* Action Chevron & Quick Copy Full Log */}
                       <Table.Td
                         style={{
-                          width: 36,
+                          width: 58,
                           textAlign: "right",
-                          paddingRight: 16,
+                          paddingRight: 12,
                         }}
                       >
-                        <IconChevronRight
-                          size={15}
-                          color="var(--color-text-subtle)"
-                        />
+                        <Group gap={4} justify="flex-end" wrap="nowrap">
+                          <Tooltip
+                            label="Copy full log with stack trace, request & response"
+                            withArrow
+                            position="top"
+                          >
+                            <ActionIcon
+                              size="xs"
+                              variant="subtle"
+                              color="gray"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCopy(
+                                  buildFullLogReport(lg),
+                                  `row-${lg.id}`,
+                                );
+                              }}
+                            >
+                              {copiedKey === `row-${lg.id}` ? (
+                                <IconCheck size={13} color="#10e57a" />
+                              ) : (
+                                <IconCopy size={13} />
+                              )}
+                            </ActionIcon>
+                          </Tooltip>
+                          <IconChevronRight
+                            size={15}
+                            color="var(--color-text-subtle)"
+                          />
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   );
@@ -1793,14 +1917,53 @@ export const LogsView: React.FC = () => {
         opened={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         title={
-          <Group gap="xs">
-            <IconActivity size={18} color="var(--color-neon-primary)" />
-            <Text
-              fw={700}
-              style={{ letterSpacing: "-0.02em", fontSize: "15px" }}
-            >
-              Telemetry & Event Inspector
-            </Text>
+          <Group justify="space-between" style={{ width: "100%", paddingRight: 8 }} wrap="nowrap">
+            <Group gap="xs">
+              <IconActivity size={18} color="var(--color-neon-primary)" />
+              <Text
+                fw={700}
+                style={{ letterSpacing: "-0.02em", fontSize: "15px" }}
+              >
+                Telemetry & Event Inspector
+              </Text>
+            </Group>
+            {selectedLog && (
+              <Button
+                size="compact-xs"
+                variant="filled"
+                color="neonGreen"
+                leftSection={
+                  copiedKey === "full-log-hdr" ? (
+                    <IconCheck size={12} />
+                  ) : (
+                    <IconCopy size={12} />
+                  )
+                }
+                onClick={() =>
+                  handleCopy(
+                    buildFullLogReport(selectedLog),
+                    "full-log-hdr",
+                  )
+                }
+                style={{
+                  fontWeight: 700,
+                  backgroundColor:
+                    copiedKey === "full-log-hdr"
+                      ? "var(--color-neon-primary)"
+                      : "var(--color-neon-dim)",
+                  color:
+                    copiedKey === "full-log-hdr"
+                      ? isDark
+                        ? "#052e16"
+                        : "#ffffff"
+                      : "var(--color-neon-primary)",
+                  border: "1px solid var(--color-border-glow)",
+                  fontSize: "11px",
+                }}
+              >
+                {copiedKey === "full-log-hdr" ? "Copied!" : "Copy Full Log"}
+              </Button>
+            )}
           </Group>
         }
         position="right"
@@ -1849,10 +2012,39 @@ export const LogsView: React.FC = () => {
                   color: "var(--color-text-primary)",
                   wordBreak: "break-all",
                   fontSize: "13px",
+                  marginBottom: 8,
                 }}
               >
                 {selectedLog.path || "/"}
               </Text>
+
+              {/* Full Log Copy Bar */}
+              <Button
+                variant="light"
+                color="neonGreen"
+                size="xs"
+                fullWidth
+                leftSection={
+                  copiedKey === "full-log-body" ? (
+                    <IconCheck size={14} />
+                  ) : (
+                    <IconFileText size={14} />
+                  )
+                }
+                onClick={() =>
+                  handleCopy(
+                    buildFullLogReport(selectedLog),
+                    "full-log-body",
+                  )
+                }
+                style={{
+                  fontWeight: 700,
+                }}
+              >
+                {copiedKey === "full-log-body"
+                  ? "Full Diagnostic Log (Stack + Req + Resp) Copied!"
+                  : "Copy Full Log (Stack Trace + Request + Response)"}
+              </Button>
             </Paper>
 
             {/* Error Message if present */}
@@ -2131,27 +2323,49 @@ export const LogsView: React.FC = () => {
                       </Text>
                       {getStatusBadge(selectedLog)}
                     </Group>
-                    <Button
-                      variant="subtle"
-                      size="compact-xs"
-                      leftSection={
-                        copiedKey === "resp" ? (
-                          <IconCheck size={12} />
-                        ) : (
-                          <IconCopy size={12} />
-                        )
-                      }
-                      onClick={() =>
-                        handleCopy(
-                          typeof responseData === "object"
-                            ? JSON.stringify(responseData, null, 2)
-                            : String(responseData || ""),
-                          "resp",
-                        )
-                      }
-                    >
-                      Copy Response
-                    </Button>
+                    <Group gap="xs">
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={
+                          copiedKey === "resp" ? (
+                            <IconCheck size={12} />
+                          ) : (
+                            <IconCopy size={12} />
+                          )
+                        }
+                        onClick={() =>
+                          handleCopy(
+                            typeof responseData === "object"
+                              ? JSON.stringify(responseData, null, 2)
+                              : String(responseData || ""),
+                            "resp",
+                          )
+                        }
+                      >
+                        Copy Response
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        color="neonGreen"
+                        leftSection={
+                          copiedKey === "full-log-resp" ? (
+                            <IconCheck size={12} />
+                          ) : (
+                            <IconFileText size={12} />
+                          )
+                        }
+                        onClick={() =>
+                          handleCopy(
+                            buildFullLogReport(selectedLog),
+                            "full-log-resp",
+                          )
+                        }
+                      >
+                        Copy Full Log
+                      </Button>
+                    </Group>
                   </Group>
                   <Box
                     p="sm"
@@ -2415,22 +2629,44 @@ export const LogsView: React.FC = () => {
                     >
                       Exception Stack Trace:
                     </Text>
-                    <Button
-                      variant="subtle"
-                      size="compact-xs"
-                      leftSection={
-                        copiedKey === "stack" ? (
-                          <IconCheck size={12} />
-                        ) : (
-                          <IconCopy size={12} />
-                        )
-                      }
-                      onClick={() =>
-                        handleCopy(selectedLog.stack_trace || "", "stack")
-                      }
-                    >
-                      Copy Stack
-                    </Button>
+                    <Group gap="xs">
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={
+                          copiedKey === "stack" ? (
+                            <IconCheck size={12} />
+                          ) : (
+                            <IconCopy size={12} />
+                          )
+                        }
+                        onClick={() =>
+                          handleCopy(selectedLog.stack_trace || "", "stack")
+                        }
+                      >
+                        Copy Stack Only
+                      </Button>
+                      <Button
+                        variant="light"
+                        color="red"
+                        size="compact-xs"
+                        leftSection={
+                          copiedKey === "full-stack-log" ? (
+                            <IconCheck size={12} />
+                          ) : (
+                            <IconFileText size={12} />
+                          )
+                        }
+                        onClick={() =>
+                          handleCopy(
+                            buildFullLogReport(selectedLog),
+                            "full-stack-log",
+                          )
+                        }
+                      >
+                        Copy Full Trace with Req & Resp
+                      </Button>
+                    </Group>
                   </Group>
                   <Box
                     p="sm"

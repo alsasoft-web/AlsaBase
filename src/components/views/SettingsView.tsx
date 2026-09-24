@@ -22,8 +22,8 @@ import {
   Divider,
   SegmentedControl,
 } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { openHoldToConfirmModal } from "../HoldToConfirmModal";
 import {
   IconSettings,
   IconNetwork,
@@ -234,7 +234,7 @@ export const SettingsView: React.FC = () => {
       return;
     }
 
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Delete Administrator",
       centered: true,
       children: (
@@ -368,7 +368,7 @@ export const SettingsView: React.FC = () => {
 
   // Restore Backup
   const handleRestoreBackup = (filename: string) => {
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Restore Database from Backup",
       centered: true,
       children: (
@@ -406,7 +406,7 @@ export const SettingsView: React.FC = () => {
 
   // Delete Backup
   const handleDeleteBackup = (filename: string) => {
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Delete Backup",
       centered: true,
       children: (
@@ -478,7 +478,7 @@ export const SettingsView: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Import SQLite Database",
       centered: true,
       children: (

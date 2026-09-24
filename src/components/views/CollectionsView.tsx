@@ -36,7 +36,6 @@ import { ApiPreviewDrawer } from "../ApiPreviewDrawer";
 import { CollectionsOverviewModal } from "../CollectionsOverviewModal";
 import { RecordDrawer } from "../RecordDrawer";
 import { ErrorBoundary } from "../ErrorBoundary";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import {
   IconPlus,
@@ -88,6 +87,7 @@ import {
   TableIndexInfo,
 } from "../../api/client";
 import { copyToClipboard } from "../../utils/clipboard";
+import { openHoldToConfirmModal } from "../HoldToConfirmModal";
 
 export interface OAuth2ProviderConfig {
   name: string;
@@ -479,7 +479,7 @@ export const CollectionsView: React.FC = () => {
 
   const handleDeleteRecord = (id: string) => {
     if (!selectedCollection) return;
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Delete Record",
       centered: true,
       children: (
@@ -513,7 +513,7 @@ export const CollectionsView: React.FC = () => {
 
   const handleBatchDelete = () => {
     if (!selectedCollection || selectedRecordIds.length === 0) return;
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: `Delete ${selectedRecordIds.length} Selected Records`,
       centered: true,
       children: (
@@ -552,7 +552,7 @@ export const CollectionsView: React.FC = () => {
   };
 
   const handleTruncateCollection = (col: CollectionDef) => {
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Truncate Collection Records",
       centered: true,
       children: (
@@ -594,7 +594,7 @@ export const CollectionsView: React.FC = () => {
       return;
     }
 
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: "Delete Collection",
       centered: true,
       children: (
@@ -734,7 +734,7 @@ export const CollectionsView: React.FC = () => {
 
   const handleDropLiveIndex = (indexName: string) => {
     if (!selectedCollection) return;
-    modals.openConfirmModal({
+    openHoldToConfirmModal({
       title: `Drop Index "${indexName}"`,
       centered: true,
       children: (
