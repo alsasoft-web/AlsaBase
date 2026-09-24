@@ -41,11 +41,9 @@ RUN npm ci
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/packages/alsabase/dist ./packages/alsabase/dist
 
-# Copy backend server code, hooks, static hosting, and public assets
+# Copy backend server code, public assets, and configs
 COPY server ./server
 COPY public ./public
-COPY _hooks ./_hooks
-COPY _public ./_public
 COPY tsconfig.server.json ./
 COPY tsconfig.json ./
 
