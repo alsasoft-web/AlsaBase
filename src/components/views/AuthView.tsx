@@ -36,23 +36,18 @@ export const AuthView: React.FC<AuthViewProps> = ({
   onAuthSuccess,
   onSetupSuccess,
 }) => {
-  const [hasSuperuserState, setHasSuperuserState] = useState<boolean | null>(
-    typeof hasSuperuser === "boolean" ? hasSuperuser : null
-  );
   const [mode, setMode] = useState<"login" | "setup">("login");
 
   React.useEffect(() => {
     if (typeof hasSuperuser === "boolean") {
-      setHasSuperuserState(hasSuperuser);
       if (!hasSuperuser) setMode("setup");
     } else {
       api
         .hasInitialSuperuser()
         .then((res) => {
-          setHasSuperuserState(res.hasSuperuser);
           if (!res.hasSuperuser) setMode("setup");
         })
-        .catch(() => setHasSuperuserState(true));
+        .catch(() => {});
     }
   }, [hasSuperuser]);
 
