@@ -32,11 +32,31 @@ interface AuthViewProps {
 }
 
 export const AuthView: React.FC<AuthViewProps> = ({
-  hasSuperuser = true,
+  hasSuperuser,
   onAuthSuccess,
   onSetupSuccess,
 }) => {
-  const isFirstRun = hasSuperuser === false;
+  const [hasSuperuserState, setHasSuperuserState] = useState<boolean | null>(
+    typeof hasSuperuser === "boolean" ? hasSuperuser : null
+  );
+  const [mode, setMode] = useState<"login" | "setup">("login");
+
+  React.useEffect(() => {
+    if (typeof hasSuperuser === "boolean") {
+      setHasSuperuserState(hasSuperuser);
+      if (!hasSuperuser) setMode("setup");
+    } else {
+      api
+        .hasInitialSuperuser()
+        .then((res) => {
+          setHasSuperuserState(res.hasSuperuser);
+          if (!res.hasSuperuser) setMode("setup");
+        })
+        .catch(() => setHasSuperuserState(true));
+    }
+  }, [hasSuperuser]);
+
+  const isFirstRun = mode === "setup";
   const { setColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme("dark", {
     getInitialValueInEffect: true,
@@ -240,7 +260,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     onChange={(e) => setSetupPasswordConfirm(e.target.value)}
                     required
                   />
-                  <Button
+                    <Button
                     type="submit"
                     fullWidth
                     loading={setupLoading}
@@ -255,6 +275,16 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     }}
                   >
                     Create Superuser & Launch
+                  </Button>
+
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    color="gray"
+                    onClick={() => setMode("login")}
+                    style={{ color: "var(--color-text-dimmed)" }}
+                  >
+                    Already have a superuser? Back to Login
                   </Button>
                 </Stack>
               </form>
@@ -308,6 +338,16 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     }}
                   >
                     Login to Dashboard
+                  </Button>
+
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    color="gray"
+                    onClick={() => setMode("setup")}
+                    style={{ color: "var(--color-text-dimmed)" }}
+                  >
+                    First time setup? Create Initial Superuser
                   </Button>
                 </Stack>
               </form>
