@@ -3,11 +3,11 @@ import path from "node:path";
 import { ZipArchive } from "archiver";
 import AdmZip from "adm-zip";
 import cron, { ScheduledTask } from "node-cron";
-import { db } from "./db";
+import { db, reopenDatabase } from "./db";
 import { getAllSettings } from "./settings";
 import { loadAllHooks, initHooksDir } from "./hooks";
 import { initPublicDir } from "./static";
-import { initDefaultCollections } from "./schema";
+import { initDefaultCollections, syncDatabaseCollections } from "./schema";
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
 export const BACKUPS_DIR = path.resolve(DATA_DIR, "backups");
@@ -209,6 +209,15 @@ export async function restoreBackup(filename: string): Promise<{ success: boolea
     fs.copyFileSync(DB_FILE, preRestoreBackup);
   }
 
+  // Close active connection and remove WAL/SHM files before extracting
+  db.close();
+  if (fs.existsSync(DB_FILE + "-wal")) {
+    try { fs.unlinkSync(DB_FILE + "-wal"); } catch {}
+  }
+  if (fs.existsSync(DB_FILE + "-shm")) {
+    try { fs.unlinkSync(DB_FILE + "-shm"); } catch {}
+  }
+
   // Extract contents
   for (const entry of zipEntries) {
     if (entry.isDirectory) continue;
@@ -231,8 +240,10 @@ export async function restoreBackup(filename: string): Promise<{ success: boolea
     }
   }
 
-  // Re-initialize all system services
+  // Reopen database and re-initialize all system services
   try {
+    reopenDatabase();
+    syncDatabaseCollections();
     initDefaultCollections();
     initPublicDir();
     initHooksDir();

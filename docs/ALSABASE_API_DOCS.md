@@ -522,11 +522,12 @@ Cancels a running CLI script or hook command process.
 ## 10. Settings & Backups (Superuser Only)
 
 - `GET /api/settings` & `PATCH /api/settings`: Read/write SMTP, backup, and security configurations.
+- `GET /api/settings/system-stats`: Returns live host VPS and Node.js process resource metrics (total/used RAM, CPU cores and load averages, disk capacity and usage, active database size, directory sizes, process uptime, and platform architecture).
 - `GET /api/backups`: Lists existing ZIP backup archives.
 - `POST /api/backups`: Generates an instant full system backup archive (database + uploads).
 - `GET /api/backups/:filename/download`: Downloads backup archive.
 - `POST /api/backups/:filename/restore`: Restores system from backup archive.
-- `POST /api/backups/import-sqlite`: Imports a raw SQLite database file (`.sqlite`/`.db`), replaces the active database, and restarts the server process.
+- `POST /api/backups/import-sqlite`: Imports a raw SQLite database file (`.sqlite`/`.db`), replaces the active database, automatically synchronizes/introspects all tables into collections, and hot-reloads the connection cleanly in-process.
 
 ---
 

@@ -396,6 +396,73 @@ export function registerRoute(
   );
 }
 
+// Helper to retrieve persisted execution status for a cron job from SQLite
+export function getCronPersistedState(name: string): {
+  last_run_at: string | null;
+  last_status: string | null;
+  last_duration_ms: number | null;
+} | null {
+  try {
+    const row = db
+      .prepare(
+        "SELECT last_run_at, last_status, last_duration_ms FROM _crons WHERE name = ?",
+      )
+      .get(name) as any;
+    if (row && row.last_run_at) {
+      return {
+        last_run_at: row.last_run_at,
+        last_status: row.last_status,
+        last_duration_ms:
+          row.last_duration_ms != null ? Number(row.last_duration_ms) : null,
+      };
+    }
+    // Fallback: check recent execution in _logs table
+    const logRow = db
+      .prepare(
+        "SELECT timestamp as last_run_at, CASE WHEN status = 200 THEN 'SUCCESS' ELSE 'ERROR' END as last_status, duration_ms as last_duration_ms FROM _logs WHERE method = 'CRON' AND path = ? ORDER BY timestamp DESC LIMIT 1",
+      )
+      .get(`/cron/${name}`) as any;
+    if (logRow && logRow.last_run_at) {
+      return {
+        last_run_at: logRow.last_run_at,
+        last_status: logRow.last_status,
+        last_duration_ms:
+          logRow.last_duration_ms != null
+            ? Number(logRow.last_duration_ms)
+            : null,
+      };
+    }
+  } catch (err) {}
+  return null;
+}
+
+// Helper to save cron execution state persistently in SQLite
+export function saveCronExecution(
+  name: string,
+  schedule: string,
+  status: "SUCCESS" | "ERROR",
+  durationMs: number,
+  runAt: string,
+) {
+  try {
+    db.prepare(`
+      INSERT INTO _crons (name, schedule, last_run_at, last_status, last_duration_ms, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET
+        schedule = excluded.schedule,
+        last_run_at = excluded.last_run_at,
+        last_status = excluded.last_status,
+        last_duration_ms = excluded.last_duration_ms,
+        updated_at = excluded.updated_at
+    `).run(name, schedule, runAt, status, durationMs, runAt);
+  } catch (err) {
+    console.error(
+      `[Hooks:Cron] Failed to persist cron execution state for "${name}":`,
+      err,
+    );
+  }
+}
+
 // Register a cron job
 export function registerCron(
   name: string,
@@ -414,9 +481,13 @@ export function registerCron(
   }
 
   // Remove existing job with same name if any
-  if (activeCrons.has(name)) {
-    const existing = activeCrons.get(name);
-    if (existing?.task) existing.task.stop();
+  const existing = activeCrons.get(name);
+  const persisted = getCronPersistedState(name);
+
+  if (existing?.task) {
+    try {
+      existing.task.stop();
+    } catch {}
     activeCrons.delete(name);
   }
 
@@ -426,9 +497,10 @@ export function registerCron(
     handler,
     sourceFile,
     active: true,
-    last_run_at: null,
-    last_status: null,
-    last_duration_ms: null,
+    last_run_at: existing?.last_run_at || persisted?.last_run_at || null,
+    last_status: existing?.last_status || persisted?.last_status || null,
+    last_duration_ms:
+      existing?.last_duration_ms ?? persisted?.last_duration_ms ?? null,
   };
 
   const task = cron.schedule(schedule, () => {
@@ -863,6 +935,7 @@ export async function executeHookCron(
     cronDef.last_run_at = now;
     cronDef.last_status = "SUCCESS";
     cronDef.last_duration_ms = duration;
+    saveCronExecution(name, cronDef.schedule, "SUCCESS", duration, now);
 
     logToDb({
       level: "INFO",
@@ -888,6 +961,7 @@ export async function executeHookCron(
     cronDef.last_run_at = now;
     cronDef.last_status = "ERROR";
     cronDef.last_duration_ms = duration;
+    saveCronExecution(name, cronDef.schedule, "ERROR", duration, now);
 
     logToDb({
       level: "ERROR",
@@ -2087,6 +2161,14 @@ export function getHooksOverview() {
 
   const crons: any[] = [];
   for (const cronDef of activeCrons.values()) {
+    if (!cronDef.last_run_at) {
+      const persisted = getCronPersistedState(cronDef.name);
+      if (persisted) {
+        cronDef.last_run_at = persisted.last_run_at;
+        cronDef.last_status = persisted.last_status;
+        cronDef.last_duration_ms = persisted.last_duration_ms;
+      }
+    }
     crons.push({
       name: cronDef.name,
       schedule: cronDef.schedule,

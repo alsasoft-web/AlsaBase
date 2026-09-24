@@ -359,9 +359,247 @@ export function createCollection(payload: {
   return { id, name, type, fields, rules, indexes, options, created_at: now, updated_at: now };
 }
 
+// Introspect, migrate, and synchronize database tables and collections
+export function syncDatabaseCollections() {
+  try {
+    // 1. Check if _collections table exists and verify its column structure
+    const masterCol = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_collections'").get() as any;
+    if (masterCol) {
+      const tableInfo = db.prepare("PRAGMA table_info('_collections')").all() as any[];
+      const colNames = tableInfo.map((c) => c.name);
+      
+      // If _collections has PocketBase schema (has 'schema' column and lacks 'schema_json')
+      if (colNames.includes("schema") && !colNames.includes("schema_json")) {
+        console.log("[Schema] Migrating legacy/PocketBase _collections table format...");
+        const pbRows = db.prepare("SELECT * FROM _collections").all() as any[];
+        
+        // Rename old table
+        db.exec("ALTER TABLE _collections RENAME TO _collections_legacy;");
+        
+        // Recreate standard _collections table
+        db.exec(`
+          CREATE TABLE _collections (
+            id TEXT PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            type TEXT,
+            schema_json TEXT NOT NULL,
+            rules_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          );
+        `);
+
+        for (const r of pbRows) {
+          try {
+            let fields: FieldDef[] = [];
+            if (r.schema) {
+              const rawSchema = typeof r.schema === "string" ? JSON.parse(r.schema) : r.schema;
+              if (Array.isArray(rawSchema)) {
+                fields = rawSchema.map((f: any) => {
+                  let fType: FieldType = 'text';
+                  const rawType = (f.type || '').toLowerCase();
+                  if (['text', 'number', 'bool', 'email', 'url', 'date', 'autodate', 'select', 'file', 'relation', 'json'].includes(rawType)) {
+                    fType = rawType as FieldType;
+                  }
+                  return {
+                    name: f.name,
+                    type: fType,
+                    required: !!f.required,
+                    unique: !!f.unique,
+                    presentable: !!f.presentable,
+                    hidden: !!f.hidden,
+                    min: f.options?.min,
+                    max: f.options?.max,
+                    noDecimal: f.options?.noDecimal,
+                    values: f.options?.values || [],
+                    maxSelect: f.options?.maxSelect || 1,
+                    maxSize: f.options?.maxSize || 5242880,
+                    mimeTypes: f.options?.mimeTypes || [],
+                    relationCollection: f.options?.collectionId || f.options?.collectionName || undefined,
+                  };
+                });
+              }
+            }
+
+            const rulesObj = {
+              type: r.type || 'base',
+              rules: {
+                list: r.listRule || '',
+                view: r.viewRule || '',
+                create: r.createRule || '',
+                update: r.updateRule || '',
+                delete: r.deleteRule || '',
+              },
+              indexes: r.indexes ? (typeof r.indexes === 'string' ? JSON.parse(r.indexes) : r.indexes) : [],
+              options: r.options ? (typeof r.options === 'string' ? JSON.parse(r.options) : r.options) : {},
+            };
+
+            const now = new Date().toISOString();
+            const createdAt = r.created || r.created_at || now;
+            const updatedAt = r.updated || r.updated_at || now;
+
+            db.prepare(`
+              INSERT OR REPLACE INTO _collections (id, name, type, schema_json, rules_json, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              r.id || crypto.randomUUID(),
+              r.name,
+              r.type || (r.name === 'users' ? 'auth' : 'base'),
+              JSON.stringify(fields),
+              JSON.stringify(rulesObj),
+              createdAt,
+              updatedAt,
+            );
+          } catch (migErr) {
+            console.warn(`[Schema] Warning converting collection ${r.name}:`, migErr);
+          }
+        }
+      } else {
+        // Ensure required columns exist on _collections
+        if (!colNames.includes("type")) {
+          try { db.exec("ALTER TABLE _collections ADD COLUMN type TEXT;"); } catch {}
+        }
+        if (!colNames.includes("rules_json")) {
+          try { db.exec("ALTER TABLE _collections ADD COLUMN rules_json TEXT NOT NULL DEFAULT '{}';"); } catch {}
+        }
+      }
+    }
+
+    // 2. Check for PocketBase _admins table -> Migrate to _superusers
+    const masterAdmins = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_admins'").get() as any;
+    if (masterAdmins) {
+      try {
+        const admins = db.prepare("SELECT * FROM _admins").all() as any[];
+        for (const adm of admins) {
+          const email = adm.email;
+          const hash = adm.passwordHash || adm.password_hash;
+          if (email && hash) {
+            const now = new Date().toISOString();
+            db.prepare(`
+              INSERT OR IGNORE INTO _superusers (id, email, password_hash, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?)
+            `).run(adm.id || crypto.randomUUID(), email, hash, adm.created || now, adm.updated || now);
+          }
+        }
+        console.log(`[Schema] Synced ${admins.length} administrator(s) from _admins into _superusers.`);
+      } catch (adminErr) {
+        console.warn("[Schema] Warning migrating _admins to _superusers:", adminErr);
+      }
+    }
+
+    // 3. Introspect all user database tables in sqlite_master and register any missing into _collections
+    const internalSystemTables = new Set([
+      "_superusers",
+      "_users",
+      "_collections",
+      "_collections_legacy",
+      "_logs",
+      "_auth_tokens",
+      "_crons",
+      "_settings",
+      "_params",
+      "_admins",
+      "sqlite_sequence",
+    ]);
+
+    const allTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as any[];
+    
+    // Get currently registered collection names
+    let registeredCols: Set<string> = new Set();
+    try {
+      const existingColRows = db.prepare("SELECT name FROM _collections").all() as any[];
+      registeredCols = new Set(existingColRows.map((c) => c.name.toLowerCase()));
+    } catch {}
+
+    for (const tableRow of allTables) {
+      const tableName = tableRow.name;
+      if (internalSystemTables.has(tableName) || tableName.startsWith("_")) {
+        continue;
+      }
+
+      if (!registeredCols.has(tableName.toLowerCase())) {
+        console.log(`[Schema] Discovered unregistered SQLite table "${tableName}". Auto-generating collection metadata...`);
+        try {
+          const colInfo = db.prepare(`PRAGMA table_info("${tableName}")`).all() as any[];
+          const fields: FieldDef[] = [];
+
+          for (const col of colInfo) {
+            const colName = col.name;
+            if (colName === "id" || colName === "created_at" || colName === "updated_at") {
+              continue;
+            }
+
+            const rawType = (col.type || "").toUpperCase();
+            let fType: FieldType = "text";
+
+            if (rawType.includes("INT") || rawType.includes("REAL") || rawType.includes("FLOAT") || rawType.includes("DOUBLE") || rawType.includes("NUM")) {
+              fType = "number";
+            } else if (rawType.includes("BOOL")) {
+              fType = "bool";
+            } else if (rawType.includes("DATE") || rawType.includes("TIME")) {
+              fType = "date";
+            } else if (rawType.includes("JSON")) {
+              fType = "json";
+            } else if (colName.toLowerCase().endsWith("email")) {
+              fType = "email";
+            } else if (colName.toLowerCase().endsWith("url")) {
+              fType = "url";
+            }
+
+            fields.push({
+              name: colName,
+              type: fType,
+              required: !!col.notnull && col.dflt_value === null,
+            });
+          }
+
+          const now = new Date().toISOString();
+          const colId = `col_${tableName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
+          const isAuth = colInfo.some((c) => c.name === "password" || c.name === "passwordHash" || c.name === "password_hash");
+
+          const rulesObj = {
+            type: isAuth ? "auth" : "base",
+            rules: {
+              list: "",
+              view: "",
+              create: "",
+              update: "",
+              delete: "",
+            },
+            indexes: [],
+            options: {},
+          };
+
+          db.prepare(`
+            INSERT OR REPLACE INTO _collections (id, name, type, schema_json, rules_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            colId,
+            tableName,
+            isAuth ? "auth" : "base",
+            JSON.stringify(fields),
+            JSON.stringify(rulesObj),
+            now,
+            now,
+          );
+
+          registeredCols.add(tableName.toLowerCase());
+          console.log(`[Schema] Auto-registered table "${tableName}" (${fields.length} fields) as collection.`);
+        } catch (tableErr) {
+          console.warn(`[Schema] Warning auto-registering table ${tableName}:`, tableErr);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[Schema] Error running database sync:", err?.message || err);
+  }
+}
+
 // Automatically create default 'users' auth collection if not present and clean tokenKey
 export function initDefaultCollections() {
   try {
+    syncDatabaseCollections();
+
     // Strip tokenKey from existing collections schema if present
     const existingRows = db.prepare('SELECT id, schema_json, rules_json FROM _collections').all() as any[];
     for (const r of existingRows) {

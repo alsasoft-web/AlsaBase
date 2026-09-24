@@ -203,6 +203,7 @@ In addition to recurring schedules, any registered cron job can be executed on-d
 
 - Clicking **Run Now** in the Admin UI opens an interactive terminal console modal and streams real-time logs line by line via Server-Sent Events (SSE).
 - Supports real-time status reporting, execution duration timers, user cancellation (`Ctrl+C`), and log clipboard export.
+- **Persistent Execution Telemetry**: The last run timestamp, execution duration, and success/error status are automatically persisted into SQLite (`_crons` table), preserving accurate status across page refreshes, hot-reloads, and server restarts.
 - SSE Endpoint: `POST /api/hooks/cron/stream` or `POST /api/hooks/cron/:name/stream`
 - Cancellation Endpoint: `POST /api/hooks/cron/cancel`
 

@@ -1,10 +1,11 @@
 import { Router, Request, Response } from "express";
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
 import crypto from "node:crypto";
 import { requireSuperuser } from "./auth";
-import { getCollection } from "./schema";
-import { db, DB_PATH } from "./db";
+import { getCollection, syncDatabaseCollections, initDefaultCollections, listCollections } from "./schema";
+import { db, DB_PATH, reopenDatabase } from "./db";
 import {
   getAllSettings,
   updateAllSettings,
@@ -23,6 +24,173 @@ import {
 } from "./backups";
 
 export const settingsRouter = Router();
+
+// Helper to compute directory size in bytes recursively
+function getDirSizeBytes(dirPath: string): number {
+  let total = 0;
+  if (!fs.existsSync(dirPath)) return 0;
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        total += getDirSizeBytes(fullPath);
+      } else if (entry.isFile()) {
+        try {
+          total += fs.statSync(fullPath).size;
+        } catch {}
+      }
+    }
+  } catch {}
+  return total;
+}
+
+// Gather comprehensive VPS and Node.js process telemetry
+export function getSystemTelemetry() {
+  const mem = process.memoryUsage();
+  const totalHostMem = os.totalmem();
+  const freeHostMem = os.freemem();
+  const usedHostMem = totalHostMem - freeHostMem;
+  const hostMemPercent = Math.min(
+    100,
+    Math.max(0, Number(((usedHostMem / totalHostMem) * 100).toFixed(1))),
+  );
+  const processMemPercentOfHost = Math.min(
+    100,
+    Math.max(0, Number(((mem.rss / totalHostMem) * 100).toFixed(2))),
+  );
+
+  const cpus = os.cpus() || [];
+  const loadAvg = os.loadavg() || [0, 0, 0];
+
+  // Database and directory metrics
+  const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
+  const uploadsDir = path.join(dataDir, "uploads");
+  const backupsDir = path.join(dataDir, "backups");
+  const publicDir =
+    process.env.PUBLIC_DIR || path.resolve(process.cwd(), "_public");
+  const hooksDir =
+    process.env.HOOKS_DIR || path.resolve(process.cwd(), "_hooks");
+
+  let dbSizeBytes = 0;
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      dbSizeBytes = fs.statSync(DB_PATH).size;
+      if (fs.existsSync(DB_PATH + "-wal")) {
+        dbSizeBytes += fs.statSync(DB_PATH + "-wal").size;
+      }
+    }
+  } catch {}
+
+  const uploadsSizeBytes = getDirSizeBytes(uploadsDir);
+  const backupsSizeBytes = getDirSizeBytes(backupsDir);
+  const publicSizeBytes = getDirSizeBytes(publicDir);
+  const hooksSizeBytes = getDirSizeBytes(hooksDir);
+  const totalDataSizeBytes = getDirSizeBytes(dataDir);
+
+  // Filesystem disk stats (available in modern Node.js)
+  let disk = {
+    totalBytes: 0,
+    freeBytes: 0,
+    usedBytes: 0,
+    usedPercent: 0,
+    available: false,
+  };
+
+  try {
+    if (typeof (fs as any).statfsSync === "function") {
+      const stat = (fs as any).statfsSync(process.cwd());
+      const total = Number(stat.bsize) * Number(stat.blocks);
+      const free = Number(stat.bsize) * Number(stat.bfree);
+      const used = total - free;
+      const usedPercent =
+        total > 0 ? Number(((used / total) * 100).toFixed(1)) : 0;
+      disk = {
+        totalBytes: total,
+        freeBytes: free,
+        usedBytes: used,
+        usedPercent,
+        available: total > 0,
+      };
+    }
+  } catch {}
+
+  // Collections & Records overview
+  let totalCollections = 0;
+  let totalRecords = 0;
+  try {
+    const cols = listCollections();
+    totalCollections = cols.length;
+    for (const col of cols) {
+      try {
+        const countRow = db
+          .prepare(`SELECT COUNT(*) as c FROM "${col.name}"`)
+          .get() as any;
+        totalRecords += countRow?.c || 0;
+      } catch {}
+    }
+  } catch {}
+
+  return {
+    timestamp: new Date().toISOString(),
+    process: {
+      uptimeSeconds: Math.floor(process.uptime()),
+      pid: process.pid,
+      nodeVersion: process.version,
+      memory: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        external: mem.external,
+        arrayBuffers: mem.arrayBuffers,
+        percentOfHost: processMemPercentOfHost,
+      },
+    },
+    host: {
+      platform: os.platform(),
+      type: os.type(),
+      release: os.release(),
+      arch: os.arch(),
+      hostname: os.hostname(),
+      uptimeSeconds: Math.floor(os.uptime()),
+      memory: {
+        totalBytes: totalHostMem,
+        freeBytes: freeHostMem,
+        usedBytes: usedHostMem,
+        usedPercent: hostMemPercent,
+      },
+      cpu: {
+        cores: cpus.length,
+        model: cpus[0]?.model || "Unknown CPU",
+        speedMHz: cpus[0]?.speed || 0,
+        loadAvg: {
+          oneMin: Number(loadAvg[0]?.toFixed(2) || 0),
+          fiveMin: Number(loadAvg[1]?.toFixed(2) || 0),
+          fifteenMin: Number(loadAvg[2]?.toFixed(2) || 0),
+        },
+      },
+      disk,
+    },
+    storage: {
+      databaseBytes: dbSizeBytes,
+      uploadsBytes: uploadsSizeBytes,
+      backupsBytes: backupsSizeBytes,
+      publicBytes: publicSizeBytes,
+      hooksBytes: hooksSizeBytes,
+      totalDataBytes: totalDataSizeBytes,
+    },
+    database: {
+      totalCollections,
+      totalRecords,
+      walMode: true,
+    },
+  };
+}
+
+// 0. Live VPS & System Resource Telemetry
+settingsRouter.get("/system-stats", requireSuperuser, (_req: Request, res: Response) => {
+  res.json(getSystemTelemetry());
+});
 
 // 1. Get all system settings
 settingsRouter.get("/", requireSuperuser, (_req: Request, res: Response) => {
@@ -367,21 +535,62 @@ backupsRouter.post("/upload", requireSuperuser, (req: Request, res: Response) =>
 });
 
 // 12. Import raw SQLite file
-backupsRouter.post("/import-sqlite", requireSuperuser, (req: Request, res: Response) => {
+backupsRouter.post("/import-sqlite", requireSuperuser, async (req: Request, res: Response) => {
   try {
     const { content } = req.body;
     if (!content) {
       return res.status(400).json({ error: "Base64 SQLite content required" });
     }
 
-    // Close DB, overwrite the file, then restart so Node re-opens it cleanly
-    db.close();
-    fs.writeFileSync(DB_PATH, Buffer.from(content, "base64"));
+    const buf = Buffer.from(content, "base64");
+    if (buf.length < 16) {
+      return res.status(400).json({ error: "Invalid SQLite file size" });
+    }
 
-    // Respond before exiting so the client knows it succeeded
-    res.json({ success: true, message: "SQLite database imported. Server is restarting." });
-    setTimeout(() => process.exit(0), 300);
+    const header = buf.subarray(0, 16).toString("utf8");
+    if (!header.startsWith("SQLite format 3")) {
+      return res.status(400).json({ error: "Uploaded file is not a valid SQLite database (header mismatch)" });
+    }
+
+    // Safe backup of current database to .trash
+    const trashDir = path.resolve(process.cwd(), ".trash");
+    if (!fs.existsSync(trashDir)) {
+      fs.mkdirSync(trashDir, { recursive: true });
+    }
+    if (fs.existsSync(DB_PATH)) {
+      const backupPath = path.join(trashDir, `${Date.now()}_pre_import_alsabase.sqlite`);
+      fs.copyFileSync(DB_PATH, backupPath);
+    }
+
+    // Close and remove WAL & SHM files before writing new database file
+    db.close();
+    if (fs.existsSync(DB_PATH + "-wal")) {
+      try { fs.unlinkSync(DB_PATH + "-wal"); } catch {}
+    }
+    if (fs.existsSync(DB_PATH + "-shm")) {
+      try { fs.unlinkSync(DB_PATH + "-shm"); } catch {}
+    }
+
+    // Overwrite the database file
+    fs.writeFileSync(DB_PATH, buf);
+
+    // Reopen database connection cleanly in-process
+    reopenDatabase();
+
+    // Migrate/sync collections from SQLite tables
+    syncDatabaseCollections();
+    initDefaultCollections();
+
+    const collections = listCollections();
+
+    // Respond with success and loaded collections count
+    res.json({
+      success: true,
+      message: `SQLite database imported successfully. Loaded ${collections.length} collection(s).`,
+      totalCollections: collections.length,
+    });
   } catch (err: any) {
+    console.error("[Backups:ImportSQLite] Error:", err);
     res.status(500).json({ error: err.message });
   }
 });

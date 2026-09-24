@@ -21,6 +21,9 @@ import {
   useComputedColorScheme,
   Divider,
   SegmentedControl,
+  Progress,
+  SimpleGrid,
+  Code,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { openHoldToConfirmModal } from "../HoldToConfirmModal";
@@ -44,8 +47,10 @@ import {
   IconServer,
   IconLayoutSidebar,
   IconLayoutNavbar,
+  IconCpu,
+  IconActivity,
 } from "@tabler/icons-react";
-import { api, AppSettings, BackupItem } from "../../api/client";
+import { api, AppSettings, BackupItem, SystemStats } from "../../api/client";
 
 export const SettingsView: React.FC = () => {
   const computedColorScheme = useComputedColorScheme("dark", {
@@ -143,6 +148,62 @@ export const SettingsView: React.FC = () => {
   const [activeEmailTemplate, setActiveEmailTemplate] = useState<
     "passwordReset" | "verification" | "confirmEmailChange" | "otp"
   >("passwordReset");
+
+  // System & VPS Telemetry State
+  const [systemStats, setSystemStats] = useState<SystemStats | null>(null);
+  const [loadingSystemStats, setLoadingSystemStats] = useState(false);
+  const [statsAutoRefresh, setStatsAutoRefresh] = useState<number>(5);
+
+  const loadSystemStats = async () => {
+    setLoadingSystemStats(true);
+    try {
+      const data = await api.getSystemStats();
+      setSystemStats(data);
+    } catch (err: any) {
+      console.error("Failed to load system stats:", err);
+    } finally {
+      setLoadingSystemStats(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "system") {
+      loadSystemStats();
+      if (statsAutoRefresh > 0) {
+        const interval = setInterval(loadSystemStats, statsAutoRefresh * 1000);
+        return () => clearInterval(interval);
+      }
+    }
+  }, [activeTab, statsAutoRefresh]);
+
+  function formatBytes(bytes: number, decimals = 2): string {
+    if (!bytes || bytes <= 0) return "0 B";
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  }
+
+  function formatUptime(seconds: number): string {
+    if (!seconds || seconds <= 0) return "0s";
+    const days = Math.floor(seconds / (3600 * 24));
+    const hours = Math.floor((seconds % (3600 * 24)) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    const parts: string[] = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+    return parts.join(" ");
+  }
+
+  function getUsageColor(percent: number): string {
+    if (percent >= 85) return "red";
+    if (percent >= 70) return "yellow";
+    return "teal";
+  }
 
   // Load Superusers list
   const loadSuperusersList = async () => {
@@ -497,21 +558,19 @@ export const SettingsView: React.FC = () => {
       onConfirm: () => {
         const reader = new FileReader();
         reader.onload = async () => {
-          const arrayBuffer = reader.result as ArrayBuffer;
-          const bytes = new Uint8Array(arrayBuffer);
-          let binary = "";
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          const base64 = btoa(binary);
           try {
-            await api.importSqlite(base64);
+            const dataUrl = reader.result as string;
+            const base64 = dataUrl.split(",")[1] || dataUrl;
+            const res = await api.importSqlite(base64);
             notifications.show({
               title: "Import Successful",
-              message: "Database imported. Server is restarting — refresh in a few seconds.",
+              message: res.message || "Database imported and synchronized successfully.",
               color: "teal",
-              autoClose: 8000,
+              autoClose: 4000,
             });
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
           } catch (err: any) {
             notifications.show({
               title: "Import Failed",
@@ -520,7 +579,7 @@ export const SettingsView: React.FC = () => {
             });
           }
         };
-        reader.readAsArrayBuffer(file);
+        reader.readAsDataURL(file);
         if (sqliteInputRef.current) sqliteInputRef.current.value = "";
       },
       onCancel: () => {
@@ -579,6 +638,32 @@ export const SettingsView: React.FC = () => {
       >
         {/* Left: Top Navigation Tabs */}
         <Group gap={6}>
+          <Button
+            variant={activeTab === "system" ? "filled" : "subtle"}
+            size="xs"
+            leftSection={<IconCpu size={14} />}
+            onClick={() => handleTabChange("system")}
+            style={{
+              backgroundColor:
+                activeTab === "system"
+                  ? "var(--color-neon-dim)"
+                  : "transparent",
+              color:
+                activeTab === "system"
+                  ? "var(--color-neon-primary)"
+                  : "var(--color-text-dimmed)",
+              border:
+                activeTab === "system"
+                  ? "1px solid var(--color-border-glow)"
+                  : "1px solid transparent",
+              fontWeight: 600,
+              fontSize: "12px",
+              height: 28,
+            }}
+          >
+            VPS Resources
+          </Button>
+
           <Button
             variant={activeTab === "general" ? "filled" : "subtle"}
             size="xs"
@@ -2303,6 +2388,391 @@ export const SettingsView: React.FC = () => {
                     </Table.Tbody>
                   </Table>
                 </Card>
+              </Stack>
+            )}
+
+            {/* TAB: SYSTEM & VPS RESOURCES */}
+            {activeTab === "system" && (
+              <Stack gap="lg">
+                {/* Header Control Card */}
+                <Card
+                  withBorder
+                  padding="lg"
+                  radius="md"
+                  style={{ backgroundColor: "var(--color-bg-card)" }}
+                >
+                  <Group justify="space-between" align="center" wrap="wrap">
+                    <div>
+                      <Group gap="xs">
+                        <IconCpu
+                          size={20}
+                          color="var(--color-neon-primary)"
+                        />
+                        <Text fw={700} size="md">
+                          VPS &amp; Server Telemetry
+                        </Text>
+                        <Badge
+                          size="sm"
+                          variant="filled"
+                          style={{
+                            backgroundColor: "var(--color-neon-dim)",
+                            color: "var(--color-neon-primary)",
+                            border: "1px solid var(--color-border-glow)",
+                          }}
+                        >
+                          Live Resource Monitor
+                        </Badge>
+                      </Group>
+                      <Text size="xs" c="dimmed" mt={4}>
+                        Real-time inspection of Host VPS RAM, CPU load averages, disk capacity, and AlsaBase runtime process consumption.
+                      </Text>
+                    </div>
+
+                    <Group gap="xs">
+                      <Group gap={6}>
+                        <Text size="xs" c="dimmed">
+                          Auto-Refresh:
+                        </Text>
+                        <SegmentedControl
+                          size="xs"
+                          value={String(statsAutoRefresh)}
+                          onChange={(v) => setStatsAutoRefresh(Number(v))}
+                          data={[
+                            { label: "Off", value: "0" },
+                            { label: "5s", value: "5" },
+                            { label: "10s", value: "10" },
+                            { label: "30s", value: "30" },
+                          ]}
+                          styles={{
+                            root: { backgroundColor: "var(--color-bg-well)" },
+                          }}
+                        />
+                      </Group>
+
+                      <Button
+                        size="xs"
+                        variant="default"
+                        leftSection={<IconRefresh size={14} />}
+                        loading={loadingSystemStats}
+                        onClick={loadSystemStats}
+                      >
+                        Refresh Now
+                      </Button>
+                    </Group>
+                  </Group>
+                </Card>
+
+                {systemStats && (
+                  <>
+                    {/* Primary Resource Gauges Grid */}
+                    <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+                      {/* 1. Host VPS Memory */}
+                      <Card
+                        withBorder
+                        padding="md"
+                        radius="md"
+                        style={{ backgroundColor: "var(--color-bg-card)" }}
+                      >
+                        <Group justify="space-between" mb="xs">
+                          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+                            Host VPS Memory (RAM)
+                          </Text>
+                          <IconActivity size={16} color="var(--color-neon-primary)" />
+                        </Group>
+                        <Group align="flex-end" gap="xs" mb="xs">
+                          <Text size="xl" fw={700} style={{ color: "var(--color-text-primary)" }}>
+                            {systemStats.host.memory.usedPercent}%
+                          </Text>
+                          <Text size="xs" c="dimmed" mb={4}>
+                            Used
+                          </Text>
+                        </Group>
+                        <Progress
+                          value={systemStats.host.memory.usedPercent}
+                          color={getUsageColor(systemStats.host.memory.usedPercent)}
+                          size="sm"
+                          radius="xl"
+                          mb="xs"
+                        />
+                        <Text size="xs" c="dimmed">
+                          {formatBytes(systemStats.host.memory.usedBytes)} / {formatBytes(systemStats.host.memory.totalBytes)}
+                        </Text>
+                        <Text size="xs" c="dimmed" mt={2}>
+                          Free: {formatBytes(systemStats.host.memory.freeBytes)}
+                        </Text>
+                      </Card>
+
+                      {/* 2. AlsaBase Process RAM */}
+                      <Card
+                        withBorder
+                        padding="md"
+                        radius="md"
+                        style={{ backgroundColor: "var(--color-bg-card)" }}
+                      >
+                        <Group justify="space-between" mb="xs">
+                          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+                            AlsaBase RAM (RSS)
+                          </Text>
+                          <IconServer size={16} color="#38bdf8" />
+                        </Group>
+                        <Group align="flex-end" gap="xs" mb="xs">
+                          <Text size="xl" fw={700} style={{ color: "var(--color-text-primary)" }}>
+                            {formatBytes(systemStats.process.memory.rss)}
+                          </Text>
+                          <Badge size="xs" color="blue" variant="light" mb={4}>
+                            {systemStats.process.memory.percentOfHost}% VPS
+                          </Badge>
+                        </Group>
+                        <Progress
+                          value={Math.min(100, (systemStats.process.memory.heapUsed / systemStats.process.memory.heapTotal) * 100)}
+                          color="blue"
+                          size="sm"
+                          radius="xl"
+                          mb="xs"
+                        />
+                        <Text size="xs" c="dimmed">
+                          Heap: {formatBytes(systemStats.process.memory.heapUsed)} / {formatBytes(systemStats.process.memory.heapTotal)}
+                        </Text>
+                        <Text size="xs" c="dimmed" mt={2}>
+                          C++ / SQLite Buffers: {formatBytes(systemStats.process.memory.external)}
+                        </Text>
+                      </Card>
+
+                      {/* 3. Host CPU & Load Average */}
+                      <Card
+                        withBorder
+                        padding="md"
+                        radius="md"
+                        style={{ backgroundColor: "var(--color-bg-card)" }}
+                      >
+                        <Group justify="space-between" mb="xs">
+                          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+                            VPS CPU &amp; Load Avg
+                          </Text>
+                          <IconCpu size={16} color="#a855f7" />
+                        </Group>
+                        <Group align="flex-end" gap="xs" mb="xs">
+                          <Text size="xl" fw={700} style={{ color: "var(--color-text-primary)" }}>
+                            {systemStats.host.cpu.cores} {systemStats.host.cpu.cores === 1 ? "Core" : "Cores"}
+                          </Text>
+                        </Group>
+                        <Group gap="xs" mb="xs">
+                          <Badge size="xs" variant="outline" color="gray">
+                            1m: {systemStats.host.cpu.loadAvg.oneMin}
+                          </Badge>
+                          <Badge size="xs" variant="outline" color="gray">
+                            5m: {systemStats.host.cpu.loadAvg.fiveMin}
+                          </Badge>
+                          <Badge size="xs" variant="outline" color="gray">
+                            15m: {systemStats.host.cpu.loadAvg.fifteenMin}
+                          </Badge>
+                        </Group>
+                        <Text size="xs" c="dimmed" lineClamp={1}>
+                          {systemStats.host.cpu.model}
+                        </Text>
+                      </Card>
+
+                      {/* 4. Storage & Disk Capacity */}
+                      <Card
+                        withBorder
+                        padding="md"
+                        radius="md"
+                        style={{ backgroundColor: "var(--color-bg-card)" }}
+                      >
+                        <Group justify="space-between" mb="xs">
+                          <Text size="xs" fw={700} c="dimmed" tt="uppercase">
+                            VPS Disk Capacity
+                          </Text>
+                          <IconDatabase size={16} color="#f59e0b" />
+                        </Group>
+                        <Group align="flex-end" gap="xs" mb="xs">
+                          <Text size="xl" fw={700} style={{ color: "var(--color-text-primary)" }}>
+                            {systemStats.host.disk.available ? `${systemStats.host.disk.usedPercent}%` : formatBytes(systemStats.storage.totalDataBytes)}
+                          </Text>
+                          <Text size="xs" c="dimmed" mb={4}>
+                            {systemStats.host.disk.available ? "Used" : "AlsaBase Data"}
+                          </Text>
+                        </Group>
+                        {systemStats.host.disk.available ? (
+                          <>
+                            <Progress
+                              value={systemStats.host.disk.usedPercent}
+                              color={getUsageColor(systemStats.host.disk.usedPercent)}
+                              size="sm"
+                              radius="xl"
+                              mb="xs"
+                            />
+                            <Text size="xs" c="dimmed">
+                              {formatBytes(systemStats.host.disk.usedBytes)} / {formatBytes(systemStats.host.disk.totalBytes)}
+                            </Text>
+                            <Text size="xs" c="dimmed" mt={2}>
+                              Free: {formatBytes(systemStats.host.disk.freeBytes)}
+                            </Text>
+                          </>
+                        ) : (
+                          <Text size="xs" c="dimmed">
+                            Database + Uploads: {formatBytes(systemStats.storage.totalDataBytes)}
+                          </Text>
+                        )}
+                      </Card>
+                    </SimpleGrid>
+
+                    {/* Detailed Breakdown Sections (2 Columns) */}
+                    <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+                      {/* Detailed Storage Breakdown Card */}
+                      <Card
+                        withBorder
+                        padding="lg"
+                        radius="md"
+                        style={{ backgroundColor: "var(--color-bg-card)" }}
+                      >
+                        <Group gap="xs" mb="md">
+                          <IconDatabase size={18} color="var(--color-neon-primary)" />
+                          <Text fw={700} size="sm">
+                            AlsaBase Data &amp; Directory Breakdown
+                          </Text>
+                        </Group>
+
+                        <Stack gap="sm">
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>SQLite Database</Text>
+                              <Text size="xs" c="dimmed">alsabase.sqlite + WAL journal</Text>
+                            </div>
+                            <Badge size="sm" variant="light" color="teal">
+                              {formatBytes(systemStats.storage.databaseBytes)}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Uploaded Files &amp; Media</Text>
+                              <Text size="xs" c="dimmed">data/uploads/</Text>
+                            </div>
+                            <Badge size="sm" variant="light" color="blue">
+                              {formatBytes(systemStats.storage.uploadsBytes)}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Backup Archives</Text>
+                              <Text size="xs" c="dimmed">data/backups/ (.zip snapshots)</Text>
+                            </div>
+                            <Badge size="sm" variant="light" color="violet">
+                              {formatBytes(systemStats.storage.backupsBytes)}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Static Web Hosting</Text>
+                              <Text size="xs" c="dimmed">_public/ root files &amp; SPAs</Text>
+                            </div>
+                            <Badge size="sm" variant="light" color="gray">
+                              {formatBytes(systemStats.storage.publicBytes)}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Serverless Hooks &amp; Scripts</Text>
+                              <Text size="xs" c="dimmed">_hooks/ modules</Text>
+                            </div>
+                            <Badge size="sm" variant="light" color="gray">
+                              {formatBytes(systemStats.storage.hooksBytes)}
+                            </Badge>
+                          </Group>
+
+                          <Divider my="xs" />
+
+                          <Group justify="space-between">
+                            <Text size="xs" fw={700} c="dimmed">Database Tables &amp; Records:</Text>
+                            <Text size="xs" fw={600}>
+                              {systemStats.database.totalCollections} collections · {systemStats.database.totalRecords.toLocaleString()} total records
+                            </Text>
+                          </Group>
+                        </Stack>
+                      </Card>
+
+                      {/* Runtime & Host Environment Card */}
+                      <Card
+                        withBorder
+                        padding="lg"
+                        radius="md"
+                        style={{ backgroundColor: "var(--color-bg-card)" }}
+                      >
+                        <Group gap="xs" mb="md">
+                          <IconServer size={18} color="#38bdf8" />
+                          <Text fw={700} size="sm">
+                            Host VPS &amp; Runtime Environment
+                          </Text>
+                        </Group>
+
+                        <Stack gap="sm">
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>AlsaBase Server Uptime</Text>
+                              <Text size="xs" c="dimmed">Process PID: {systemStats.process.pid}</Text>
+                            </div>
+                            <Badge size="sm" variant="filled" color="green">
+                              {formatUptime(systemStats.process.uptimeSeconds)}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Host VPS Uptime</Text>
+                              <Text size="xs" c="dimmed">System power-on duration</Text>
+                            </div>
+                            <Badge size="sm" variant="light" color="gray">
+                              {formatUptime(systemStats.host.uptimeSeconds)}
+                            </Badge>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Operating System</Text>
+                              <Text size="xs" c="dimmed">Platform &amp; Kernel</Text>
+                            </div>
+                            <Code style={{ backgroundColor: "transparent" }}>
+                              {systemStats.host.platform} {systemStats.host.arch} ({systemStats.host.release})
+                            </Code>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Node.js Engine</Text>
+                              <Text size="xs" c="dimmed">V8 Runtime Version</Text>
+                            </div>
+                            <Code style={{ backgroundColor: "transparent" }}>
+                              {systemStats.process.nodeVersion}
+                            </Code>
+                          </Group>
+
+                          <Group justify="space-between" p="xs" style={{ backgroundColor: "var(--color-bg-well)", borderRadius: 6 }}>
+                            <div>
+                              <Text size="sm" fw={600}>Host Machine Name</Text>
+                              <Text size="xs" c="dimmed">Network Hostname</Text>
+                            </div>
+                            <Code style={{ backgroundColor: "transparent" }}>
+                              {systemStats.host.hostname}
+                            </Code>
+                          </Group>
+
+                          <Divider my="xs" />
+
+                          <Group justify="space-between">
+                            <Text size="xs" fw={700} c="dimmed">Telemetry Timestamp:</Text>
+                            <Text size="xs" c="dimmed">
+                              {new Date(systemStats.timestamp).toLocaleTimeString()}
+                            </Text>
+                          </Group>
+                        </Stack>
+                      </Card>
+                    </SimpleGrid>
+                  </>
+                )}
               </Stack>
             )}
           </Stack>

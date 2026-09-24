@@ -145,6 +145,67 @@ export interface LogEntry {
   metadata_json?: string;
 }
 
+export interface SystemStats {
+  timestamp: string;
+  process: {
+    uptimeSeconds: number;
+    pid: number;
+    nodeVersion: string;
+    memory: {
+      rss: number;
+      heapUsed: number;
+      heapTotal: number;
+      external: number;
+      arrayBuffers: number;
+      percentOfHost: number;
+    };
+  };
+  host: {
+    platform: string;
+    type: string;
+    release: string;
+    arch: string;
+    hostname: string;
+    uptimeSeconds: number;
+    memory: {
+      totalBytes: number;
+      freeBytes: number;
+      usedBytes: number;
+      usedPercent: number;
+    };
+    cpu: {
+      cores: number;
+      model: string;
+      speedMHz: number;
+      loadAvg: {
+        oneMin: number;
+        fiveMin: number;
+        fifteenMin: number;
+      };
+    };
+    disk: {
+      totalBytes: number;
+      freeBytes: number;
+      usedBytes: number;
+      usedPercent: number;
+      available: boolean;
+    };
+  };
+  storage: {
+    databaseBytes: number;
+    uploadsBytes: number;
+    backupsBytes: number;
+    publicBytes: number;
+    hooksBytes: number;
+    totalDataBytes: number;
+  };
+  database: {
+    totalCollections: number;
+    totalRecords: number;
+    walMode: boolean;
+  };
+}
+
 export interface PaginatedResult<T> {
   page: number;
   limit: number;
@@ -866,6 +927,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content }),
     });
+  },
+
+  async getSystemStats() {
+    return request<SystemStats>("/settings/system-stats");
   },
 
   realtime: {

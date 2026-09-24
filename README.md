@@ -68,17 +68,16 @@ npm run server
 
 ### 5. Running with Docker / Docker Compose
 
-Start AlsaBase instantly using Docker Compose with persistent data volumes:
+Start AlsaBase instantly using Docker Compose with persistent data volumes (pulls prebuilt image from GitHub Packages):
 
 ```bash
 docker compose up -d
 ```
 
-Or build and run the container manually:
+Or run the prebuilt container directly with Docker:
 
 ```bash
-docker build -t alsabase .
-docker run -d -p 8090:8090 -v $(pwd)/data:/app/data --name alsabase alsabase
+docker run -d -p 8090:8090 -v $(pwd)/data:/app/data --name alsabase ghcr.io/alsasoft-web/alsabase:latest
 ```
 
 Open your browser at `http://localhost:8090/_/` to create your initial superuser account and start creating collections.

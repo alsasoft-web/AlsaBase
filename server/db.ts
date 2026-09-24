@@ -10,15 +10,38 @@ if (!fs.existsSync(DATA_DIR)) {
 
 export const DB_PATH =
   process.env.DATABASE_PATH || path.join(DATA_DIR, "alsabase.sqlite");
-export const db = new DatabaseSync(DB_PATH);
 
-// Enable SQLite Write-Ahead Logging & performance tuning
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec("PRAGMA foreign_keys = ON;");
-db.exec("PRAGMA synchronous = NORMAL;");
-db.exec("PRAGMA cache_size = -64000;");
-db.exec("PRAGMA temp_store = MEMORY;");
-db.exec("PRAGMA busy_timeout = 5000;");
+let activeDb = new DatabaseSync(DB_PATH);
+
+function initDbPragmas(targetDb: DatabaseSync) {
+  targetDb.exec("PRAGMA journal_mode = WAL;");
+  targetDb.exec("PRAGMA foreign_keys = ON;");
+  targetDb.exec("PRAGMA synchronous = NORMAL;");
+  targetDb.exec("PRAGMA cache_size = -64000;");
+  targetDb.exec("PRAGMA temp_store = MEMORY;");
+  targetDb.exec("PRAGMA busy_timeout = 5000;");
+}
+
+initDbPragmas(activeDb);
+
+export const db = new Proxy({} as DatabaseSync, {
+  get(_target, prop, receiver) {
+    const value = Reflect.get(activeDb, prop, receiver);
+    if (typeof value === "function") {
+      return value.bind(activeDb);
+    }
+    return value;
+  },
+});
+
+export function reopenDatabase() {
+  try {
+    activeDb.close();
+  } catch {}
+  activeDb = new DatabaseSync(DB_PATH);
+  initDbPragmas(activeDb);
+  initSystemTables();
+}
 
 export function initSystemTables() {
   db.exec(`
@@ -73,6 +96,15 @@ export function initSystemTables() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS _crons (
+      name TEXT PRIMARY KEY,
+      schedule TEXT,
+      last_run_at TEXT,
+      last_status TEXT,
+      last_duration_ms REAL,
+      updated_at TEXT NOT NULL
+    );
+
     -- Performance Indexes
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON _logs(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_logs_level ON _logs(level);
@@ -80,6 +112,7 @@ export function initSystemTables() {
     CREATE INDEX IF NOT EXISTS idx_users_username ON _users(username);
     CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON _auth_tokens(token);
     CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON _auth_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_crons_name ON _crons(name);
   `);
 
   // Purge oversized/corrupted logs from recursion and reclaim space

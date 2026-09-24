@@ -1,26 +1,27 @@
 services:
   alsabase:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: "ghcr.io/alsasoft-web/alsabase:latest"
     container_name: alsabase
     restart: unless-stopped
     ports:
-      - "${PORT:-8090}:8090"
+      - "8090:8090"
     environment:
       - PORT=8090
       - NODE_ENV=production
-      - JWT_SECRET=${JWT_SECRET:-replace_with_a_secure_random_jwt_secret_in_production}
+      - "JWT_SECRET=${SERVICE_PASSWORD_JWT}"
+      - SERVICE_FQDN_ALSABASE_8090
     volumes:
-      # Persistent SQLite database storage and backups (saved to data/backups)
       - ./data:/app/data
-      # Serverless TypeScript/JavaScript hooks
       - ./_hooks:/app/_hooks
-      # Public static web assets & SPA hosting
       - ./_public:/app/_public
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/health"]
+      test:
+        - CMD
+        - wget
+        - "--no-verbose"
+        - "--tries=1"
+        - "--spider"
+        - "http://localhost:8090/api/health"
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
