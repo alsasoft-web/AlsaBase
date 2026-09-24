@@ -72,6 +72,11 @@ import {
   IconBracketsContain,
   IconInfoCircle,
   IconChevronDown,
+  IconChevronUp,
+  IconArrowsSort,
+  IconFilter,
+  IconX,
+  IconAdjustmentsHorizontal,
   IconBrandGoogle,
   IconBrandGithub,
   IconBrandDiscord,
@@ -218,10 +223,116 @@ export const CollectionsView: React.FC = () => {
   const [recordDrawerOpen, setRecordDrawerOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<any | null>(null);
 
+  // Sorting State
+  const [sortField, setSortField] = useState<string>("created_at");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
+  // Special Filter State
+  const [recordFilter, setRecordFilter] = useState<string>("");
+  const [appliedFilter, setAppliedFilter] = useState<string>("");
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState<boolean>(false);
+  const [builderCol, setBuilderCol] = useState<string>("id");
+  const [builderOp, setBuilderOp] = useState<string>("=");
+  const [builderVal, setBuilderVal] = useState<string>("");
+
   const handleSelectCollection = (col: CollectionDef) => {
     setSelectedCollection(col);
     setSelectedRecordIds([]);
+    setSortField("created_at");
+    setSortDirection("desc");
+    setRecordPage(1);
+    setRecordFilter("");
+    setAppliedFilter("");
+    setBuilderVal("");
+    setBuilderCol("id");
     localStorage.setItem("alsabase_selected_col", col.name);
+  };
+
+  const handleSort = (field: string) => {
+    const isCurrent =
+      sortField === field ||
+      (field === "created_at" && (sortField === "created" || sortField === "created_at")) ||
+      (field === "updated_at" && (sortField === "updated" || sortField === "updated_at"));
+
+    let nextDir: "asc" | "desc" = "asc";
+    if (isCurrent) {
+      nextDir = sortDirection === "asc" ? "desc" : "asc";
+    }
+    setSortField(field);
+    setSortDirection(nextDir);
+    setRecordPage(1);
+  };
+
+  const handleApplyFilter = (customFilter?: string) => {
+    const filterToApply =
+      typeof customFilter === "string" ? customFilter.trim() : recordFilter.trim();
+    setRecordFilter(filterToApply);
+    setAppliedFilter(filterToApply);
+    setRecordPage(1);
+  };
+
+  const handleClearFilter = () => {
+    setRecordFilter("");
+    setAppliedFilter("");
+    setBuilderVal("");
+    setRecordPage(1);
+  };
+
+  const handleInsertBuilderCondition = () => {
+    if (!builderVal.trim()) return;
+    const valTrim = builderVal.trim();
+    const isNum = !isNaN(Number(valTrim)) && valTrim !== "";
+    const isBool = valTrim.toLowerCase() === "true" || valTrim.toLowerCase() === "false";
+    const formattedVal =
+      isNum || isBool || builderOp === "~" || builderOp === "!~"
+        ? valTrim
+        : `"${valTrim}"`;
+    const clause = `${builderCol} ${builderOp} ${formattedVal}`;
+    const newFilter = recordFilter.trim() ? `${recordFilter.trim()} && ${clause}` : clause;
+    setRecordFilter(newFilter);
+    setAppliedFilter(newFilter);
+    setRecordPage(1);
+    setBuilderVal("");
+  };
+
+  const renderSortIcon = (field: string) => {
+    const isSorted =
+      sortField === field ||
+      (field === "created_at" && (sortField === "created" || sortField === "created_at")) ||
+      (field === "updated_at" && (sortField === "updated" || sortField === "updated_at"));
+
+    if (!isSorted) {
+      return (
+        <IconArrowsSort
+          size={12}
+          style={{
+            opacity: 0.35,
+            flexShrink: 0,
+            transition: "opacity 0.15s ease",
+          }}
+        />
+      );
+    }
+
+    return sortDirection === "asc" ? (
+      <IconChevronUp
+        size={12}
+        color="var(--color-neon-primary)"
+        style={{
+          flexShrink: 0,
+          strokeWidth: 2.5,
+        }}
+      />
+    ) : (
+      <IconChevronDown
+        size={12}
+        color="var(--color-neon-primary)"
+        style={{
+          flexShrink: 0,
+          strokeWidth: 2.5,
+        }}
+      />
+    );
   };
 
   const loadCollections = async () => {
@@ -234,7 +345,14 @@ export const CollectionsView: React.FC = () => {
         const match = list.find((c) => c.name === savedColName);
         const colToSelect = match || list[0];
         setSelectedCollection((prev) => prev || colToSelect);
-        loadRecords(colToSelect, 1, parseInt(pageSize, 10) || 20);
+        loadRecords(
+          colToSelect,
+          1,
+          parseInt(pageSize, 10) || 20,
+          sortField,
+          sortDirection,
+          appliedFilter,
+        );
       }
     } catch (err: any) {
       notifications.show({
@@ -249,13 +367,21 @@ export const CollectionsView: React.FC = () => {
     col: CollectionDef,
     page = 1,
     limitVal = parseInt(pageSize, 10) || 20,
+    currentSortField = sortField,
+    currentSortDir = sortDirection,
+    currentFilter = appliedFilter,
   ) => {
     setLoading(true);
     try {
+      const sortParam = currentSortField
+        ? `${currentSortDir === "desc" ? "-" : "+"}${currentSortField}`
+        : "-created_at";
       const res = await api.listRecords(col.name, {
         page,
         limit: limitVal,
         search: recordSearch,
+        sort: sortParam,
+        filter: currentFilter || undefined,
       });
       setRecords(res.items || []);
       setTotalRecords(res.total || 0);
@@ -278,9 +404,16 @@ export const CollectionsView: React.FC = () => {
 
   useEffect(() => {
     if (selectedCollection) {
-      loadRecords(selectedCollection, 1, parseInt(pageSize, 10) || 20);
+      loadRecords(
+        selectedCollection,
+        recordPage,
+        parseInt(pageSize, 10) || 20,
+        sortField,
+        sortDirection,
+        appliedFilter,
+      );
     }
-  }, [selectedCollection, recordSearch, pageSize]);
+  }, [selectedCollection, recordSearch, pageSize, sortField, sortDirection, appliedFilter]);
 
   const handleOpenCreateCollection = () => {
     setEditingCollectionName(null);
@@ -1543,17 +1676,17 @@ export const CollectionsView: React.FC = () => {
                   boxSizing: "border-box",
                 }}
               >
-                {/* Search Bar */}
-                <Group gap={8} style={{ flex: 1, maxWidth: 480 }}>
+                {/* Search & Filter Toolbar */}
+                <Group gap={8} style={{ flex: 1, maxWidth: 600 }}>
                   <TextInput
-                    placeholder="Search or filter records..."
+                    placeholder="Search text fields..."
                     leftSection={
                       <IconSearch size={14} color="var(--color-text-dimmed)" />
                     }
                     value={recordSearch}
                     onChange={(e) => setRecordSearch(e.target.value)}
                     size="xs"
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, minWidth: 160 }}
                     styles={{
                       input: {
                         backgroundColor: "var(--color-bg-well)",
@@ -1563,6 +1696,55 @@ export const CollectionsView: React.FC = () => {
                       },
                     }}
                   />
+                  <Tooltip label="Special Column & Formula Filters" withArrow position="top">
+                    <Button
+                      size="xs"
+                      variant={appliedFilter ? "filled" : filterDrawerOpen ? "light" : "default"}
+                      color={appliedFilter ? "neonGreen" : "gray"}
+                      leftSection={<IconFilter size={13} />}
+                      rightSection={
+                        appliedFilter ? (
+                          <Badge
+                            size="xs"
+                            circle
+                            color="dark"
+                            style={{
+                              height: 16,
+                              width: 16,
+                              minWidth: 16,
+                              fontSize: "10px",
+                              padding: 0,
+                              color: "var(--color-neon-primary)",
+                              backgroundColor: "rgba(0,0,0,0.4)",
+                            }}
+                          >
+                            1
+                          </Badge>
+                        ) : null
+                      }
+                      onClick={() => setFilterDrawerOpen((prev) => !prev)}
+                      style={{
+                        height: 30,
+                        fontSize: "12px",
+                        fontWeight: appliedFilter ? 700 : 500,
+                        borderColor: appliedFilter
+                          ? "var(--color-neon-primary)"
+                          : "var(--color-border)",
+                        backgroundColor: appliedFilter
+                          ? "var(--color-neon-primary)"
+                          : filterDrawerOpen
+                          ? "var(--color-neon-dim)"
+                          : "var(--color-bg-card)",
+                        color: appliedFilter
+                          ? "var(--color-neon-text)"
+                          : filterDrawerOpen
+                          ? "var(--color-neon-primary)"
+                          : "var(--color-text-secondary)",
+                      }}
+                    >
+                      Filter
+                    </Button>
+                  </Tooltip>
                   <Tooltip label="Refresh Records" withArrow position="top">
                     <ActionIcon
                       variant="subtle"
@@ -1658,6 +1840,300 @@ export const CollectionsView: React.FC = () => {
                 </Group>
               </div>
 
+              {/* Expandable Special Filter Bar */}
+              <Collapse expanded={filterDrawerOpen}>
+                <Paper
+                  p="sm"
+                  style={{
+                    backgroundColor: "var(--color-bg-surface)",
+                    borderBottom: "1px solid var(--color-border)",
+                    borderRadius: 0,
+                  }}
+                >
+                  <Stack gap="xs">
+                    <Group justify="space-between" align="center" wrap="nowrap">
+                      <Group gap={6}>
+                        <IconAdjustmentsHorizontal size={15} color="var(--color-neon-primary)" />
+                        <Text size="xs" fw={700} c="var(--color-text-primary)">
+                          Column Filter Builder
+                        </Text>
+                      </Group>
+                      <Group gap={6}>
+                        {appliedFilter && (
+                          <Button
+                            size="compact-xs"
+                            variant="subtle"
+                            color="red"
+                            leftSection={<IconX size={12} />}
+                            onClick={handleClearFilter}
+                          >
+                            Clear Filter
+                          </Button>
+                        )}
+                        <ActionIcon
+                          size="xs"
+                          variant="subtle"
+                          color="gray"
+                          onClick={() => setFilterDrawerOpen(false)}
+                        >
+                          <IconX size={13} />
+                        </ActionIcon>
+                      </Group>
+                    </Group>
+
+                    {/* Visual Filter Builder Row */}
+                    <Group gap="xs" wrap="nowrap" align="flex-end">
+                      <Box style={{ width: 150 }}>
+                        <Text size="11px" c="dimmed" mb={2}>
+                          Column
+                        </Text>
+                        <Select
+                          size="xs"
+                          value={builderCol}
+                          onChange={(val) => setBuilderCol(val || "id")}
+                          data={[
+                            { label: "id", value: "id" },
+                            ...selectedCollection.fields.map((f) => ({
+                              label: f.name,
+                              value: f.name,
+                            })),
+                            { label: "created", value: "created_at" },
+                            { label: "updated", value: "updated_at" },
+                          ]}
+                          styles={{
+                            input: {
+                              backgroundColor: "var(--color-bg-well)",
+                              borderColor: "var(--color-border)",
+                              fontSize: "12px",
+                              height: 30,
+                            },
+                          }}
+                        />
+                      </Box>
+
+                      <Box style={{ width: 135 }}>
+                        <Text size="11px" c="dimmed" mb={2}>
+                          Operator
+                        </Text>
+                        <Select
+                          size="xs"
+                          value={builderOp}
+                          onChange={(val) => setBuilderOp(val || "=")}
+                          data={[
+                            { label: "= (Equals)", value: "=" },
+                            { label: "!= (Not equals)", value: "!=" },
+                            { label: "~ (Contains)", value: "~" },
+                            { label: "!~ (Not contains)", value: "!~" },
+                            { label: "> (Greater than)", value: ">" },
+                            { label: "< (Less than)", value: "<" },
+                            { label: ">= (Greater or eq)", value: ">=" },
+                            { label: "<= (Less or eq)", value: "<=" },
+                          ]}
+                          styles={{
+                            input: {
+                              backgroundColor: "var(--color-bg-well)",
+                              borderColor: "var(--color-border)",
+                              fontSize: "12px",
+                              height: 30,
+                            },
+                          }}
+                        />
+                      </Box>
+
+                      <Box style={{ flex: 1 }}>
+                        <Text size="11px" c="dimmed" mb={2}>
+                          Value
+                        </Text>
+                        <TextInput
+                          placeholder='e.g. 123 or "game"'
+                          size="xs"
+                          value={builderVal}
+                          onChange={(e) => setBuilderVal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleInsertBuilderCondition();
+                            }
+                          }}
+                          styles={{
+                            input: {
+                              backgroundColor: "var(--color-bg-well)",
+                              borderColor: "var(--color-border)",
+                              fontSize: "12px",
+                              height: 30,
+                              fontFamily: "var(--font-mono)",
+                            },
+                          }}
+                        />
+                      </Box>
+
+                      <Button
+                        size="xs"
+                        variant="filled"
+                        color="neonGreen"
+                        onClick={handleInsertBuilderCondition}
+                        style={{
+                          height: 30,
+                          backgroundColor: "var(--color-neon-primary)",
+                          color: "var(--color-neon-text)",
+                          fontWeight: 700,
+                        }}
+                      >
+                        Add Condition
+                      </Button>
+                    </Group>
+
+                    {/* Raw Expression Input */}
+                    <Box>
+                      <Group justify="space-between" align="center" mb={2}>
+                        <Text size="11px" c="dimmed">
+                          Filter Expression (e.g. id = 123 or title = game or id = "123" && title = "game")
+                        </Text>
+                      </Group>
+                      <Group gap="xs" wrap="nowrap">
+                        <TextInput
+                          placeholder='e.g. id = 123 || title = "game"'
+                          size="xs"
+                          value={recordFilter}
+                          onChange={(e) => setRecordFilter(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleApplyFilter();
+                            }
+                          }}
+                          style={{ flex: 1 }}
+                          styles={{
+                            input: {
+                              backgroundColor: "var(--color-bg-well)",
+                              borderColor: "var(--color-border)",
+                              fontSize: "12px",
+                              height: 30,
+                              fontFamily: "var(--font-mono)",
+                            },
+                          }}
+                        />
+                        <Button
+                          size="xs"
+                          variant="filled"
+                          color="neonGreen"
+                          onClick={() => handleApplyFilter()}
+                          style={{
+                            height: 30,
+                            backgroundColor: "var(--color-neon-primary)",
+                            color: "var(--color-neon-text)",
+                            fontWeight: 700,
+                          }}
+                        >
+                          Apply
+                        </Button>
+                        {recordFilter && (
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            color="gray"
+                            onClick={handleClearFilter}
+                            style={{ height: 30 }}
+                          >
+                            Reset
+                          </Button>
+                        )}
+                      </Group>
+                    </Box>
+
+                    {/* Quick Example Pills */}
+                    <Group gap={6} wrap="nowrap" style={{ overflowX: "auto" }}>
+                      <Text size="11px" c="dimmed">
+                        Examples:
+                      </Text>
+                      <Badge
+                        size="xs"
+                        variant="outline"
+                        color="gray"
+                        style={{ cursor: "pointer", textTransform: "none", fontFamily: "var(--font-mono)" }}
+                        onClick={() => {
+                          const expr = 'id = "123"';
+                          setRecordFilter(expr);
+                          handleApplyFilter(expr);
+                        }}
+                      >
+                        id = 123
+                      </Badge>
+                      {selectedCollection.fields.slice(0, 3).map((f) => (
+                        <Badge
+                          key={f.name}
+                          size="xs"
+                          variant="outline"
+                          color="gray"
+                          style={{ cursor: "pointer", textTransform: "none", fontFamily: "var(--font-mono)" }}
+                          onClick={() => {
+                            const expr = `${f.name} = "game"`;
+                            setRecordFilter(expr);
+                            handleApplyFilter(expr);
+                          }}
+                        >
+                          {f.name} = game
+                        </Badge>
+                      ))}
+                    </Group>
+                  </Stack>
+                </Paper>
+              </Collapse>
+
+              {/* Active Filter Pill Bar */}
+              {appliedFilter && (
+                <Paper
+                  px="md"
+                  py={6}
+                  style={{
+                    backgroundColor: "var(--color-neon-dim)",
+                    borderBottom: "1px solid var(--color-border-glow)",
+                    borderRadius: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <Group gap="xs" wrap="nowrap">
+                    <IconFilter size={13} color="var(--color-neon-primary)" />
+                    <Text size="xs" fw={700} c="var(--color-neon-primary)">
+                      Active Filter:
+                    </Text>
+                    <Code
+                      style={{
+                        backgroundColor: "var(--color-bg-card)",
+                        color: "var(--color-neon-primary)",
+                        fontSize: "11.5px",
+                        border: "1px solid var(--color-border-glow)",
+                        padding: "2px 6px",
+                      }}
+                    >
+                      {appliedFilter}
+                    </Code>
+                    <Text size="xs" c="dimmed">
+                      ({totalRecords} {totalRecords === 1 ? "record" : "records"})
+                    </Text>
+                  </Group>
+                  <Group gap={6}>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={() => setFilterDrawerOpen(true)}
+                    >
+                      Edit Filter
+                    </Button>
+                    <ActionIcon
+                      size="xs"
+                      variant="subtle"
+                      color="red"
+                      onClick={handleClearFilter}
+                      title="Clear active filter"
+                    >
+                      <IconX size={13} />
+                    </ActionIcon>
+                  </Group>
+                </Paper>
+              )}
+
               {/* Data Workspace Table or JSON View */}
               <div
                 style={{
@@ -1706,22 +2182,39 @@ export const CollectionsView: React.FC = () => {
                               }}
                             />
                           </Table.Th>
-                          <Table.Th style={{ width: 155, minWidth: 155, whiteSpace: "nowrap" }}>
-                            <Group gap={4} wrap="nowrap">
-                              <IconKey size={13} color="#fbbf24" />
-                              <Text
-                                size="xs"
-                                c="dimmed"
-                                fw={700}
-                                style={{
-                                  textTransform: "uppercase",
-                                  letterSpacing: "0.05em",
-                                  fontSize: "11px",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                id
-                              </Text>
+                          <Table.Th
+                            style={{
+                              width: 155,
+                              minWidth: 155,
+                              whiteSpace: "nowrap",
+                              cursor: "pointer",
+                              userSelect: "none",
+                            }}
+                            onClick={() => handleSort("id")}
+                            title="Sort by ID"
+                          >
+                            <Group gap={4} wrap="nowrap" justify="space-between">
+                              <Group gap={4} wrap="nowrap">
+                                <IconKey size={13} color="#fbbf24" />
+                                <Text
+                                  size="xs"
+                                  c={
+                                    sortField === "id"
+                                      ? "var(--color-neon-primary)"
+                                      : "dimmed"
+                                  }
+                                  fw={sortField === "id" ? 800 : 700}
+                                  style={{
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.05em",
+                                    fontSize: "11px",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  id
+                                </Text>
+                              </Group>
+                              {renderSortIcon("id")}
                             </Group>
                           </Table.Th>
                           {selectedCollection.fields
@@ -1731,72 +2224,132 @@ export const CollectionsView: React.FC = () => {
                                 !["password", "tokenKey"].includes(f.name)
                             )
                             .map((f) => (
-                              <Table.Th key={f.name}>
-                                <Group gap={5} wrap="nowrap">
-                                  {getFieldIcon(f.type, f.name)}
-                                  <Text
-                                    size="xs"
-                                    c="dimmed"
-                                    fw={700}
-                                    style={{
-                                      textTransform: "uppercase",
-                                      letterSpacing: "0.05em",
-                                      fontSize: "11px",
-                                    }}
-                                  >
-                                    {f.name}
-                                  </Text>
-                                  {f.unique && (
-                                    <Badge
+                              <Table.Th
+                                key={f.name}
+                                style={{
+                                  cursor: "pointer",
+                                  userSelect: "none",
+                                  whiteSpace: "nowrap",
+                                }}
+                                onClick={() => handleSort(f.name)}
+                                title={`Sort by ${f.name}`}
+                              >
+                                <Group gap={5} wrap="nowrap" justify="space-between">
+                                  <Group gap={5} wrap="nowrap">
+                                    {getFieldIcon(f.type, f.name)}
+                                    <Text
                                       size="xs"
-                                      variant="outline"
-                                      color="blue"
+                                      c={
+                                        sortField === f.name
+                                          ? "var(--color-neon-primary)"
+                                          : "dimmed"
+                                      }
+                                      fw={sortField === f.name ? 800 : 700}
                                       style={{
-                                        height: 16,
-                                        fontSize: "9px",
-                                        padding: "0 4px",
-                                        borderWidth: 1,
-                                        textTransform: "lowercase",
+                                        textTransform: "uppercase",
+                                        letterSpacing: "0.05em",
+                                        fontSize: "11px",
                                       }}
                                     >
-                                      unique
-                                    </Badge>
-                                  )}
+                                      {f.name}
+                                    </Text>
+                                    {f.unique && (
+                                      <Badge
+                                        size="xs"
+                                        variant="outline"
+                                        color="blue"
+                                        style={{
+                                          height: 16,
+                                          fontSize: "9px",
+                                          padding: "0 4px",
+                                          borderWidth: 1,
+                                          textTransform: "lowercase",
+                                        }}
+                                      >
+                                        unique
+                                      </Badge>
+                                    )}
+                                  </Group>
+                                  {renderSortIcon(f.name)}
                                 </Group>
                               </Table.Th>
                             ))}
-                          <Table.Th style={{ width: 130 }}>
-                            <Group gap={4} wrap="nowrap">
-                              <IconCalendar size={13} color="#a855f7" />
-                              <Text
-                                size="xs"
-                                c="dimmed"
-                                fw={700}
-                                style={{
-                                  textTransform: "uppercase",
-                                  letterSpacing: "0.05em",
-                                  fontSize: "11px",
-                                }}
-                              >
-                                created
-                              </Text>
+                          <Table.Th
+                            style={{
+                              width: 130,
+                              cursor: "pointer",
+                              userSelect: "none",
+                              whiteSpace: "nowrap",
+                            }}
+                            onClick={() => handleSort("created_at")}
+                            title="Sort by Created"
+                          >
+                            <Group gap={4} wrap="nowrap" justify="space-between">
+                              <Group gap={4} wrap="nowrap">
+                                <IconCalendar size={13} color="#a855f7" />
+                                <Text
+                                  size="xs"
+                                  c={
+                                    sortField === "created_at" ||
+                                    sortField === "created"
+                                      ? "var(--color-neon-primary)"
+                                      : "dimmed"
+                                  }
+                                  fw={
+                                    sortField === "created_at" ||
+                                    sortField === "created"
+                                      ? 800
+                                      : 700
+                                  }
+                                  style={{
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.05em",
+                                    fontSize: "11px",
+                                  }}
+                                >
+                                  created
+                                </Text>
+                              </Group>
+                              {renderSortIcon("created_at")}
                             </Group>
                           </Table.Th>
-                          <Table.Th style={{ width: 130 }}>
-                            <Group gap={4} wrap="nowrap">
-                              <IconClock size={13} color="#ec4899" />
-                              <Text
-                                size="xs"
-                                c="dimmed"
-                                fw={700}
-                                style={{
-                                  textTransform: "uppercase",
-                                  letterSpacing: "0.05em",
-                                  fontSize: "11px",
-                                }}
-                              >
-                                updated
-                              </Text>
+                          <Table.Th
+                            style={{
+                              width: 130,
+                              cursor: "pointer",
+                              userSelect: "none",
+                              whiteSpace: "nowrap",
+                            }}
+                            onClick={() => handleSort("updated_at")}
+                            title="Sort by Updated"
+                          >
+                            <Group gap={4} wrap="nowrap" justify="space-between">
+                              <Group gap={4} wrap="nowrap">
+                                <IconClock size={13} color="#ec4899" />
+                                <Text
+                                  size="xs"
+                                  c={
+                                    sortField === "updated_at" ||
+                                    sortField === "updated"
+                                      ? "var(--color-neon-primary)"
+                                      : "dimmed"
+                                  }
+                                  fw={
+                                    sortField === "updated_at" ||
+                                    sortField === "updated"
+                                      ? 800
+                                      : 700
+                                  }
+                                  style={{
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.05em",
+                                    fontSize: "11px",
+                                  }}
+                                >
+                                  updated
+                                </Text>
+                              </Group>
+                              {renderSortIcon("updated_at")}
                             </Group>
                           </Table.Th>
                           <Table.Th style={{ width: 50, textAlign: "right" }}>

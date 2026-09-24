@@ -25,16 +25,27 @@ import {
 
 export const settingsRouter = Router();
 
-// Helper to compute directory size in bytes recursively
-function getDirSizeBytes(dirPath: string): number {
-  let total = 0;
+// Helper to compute directory size in bytes recursively with caching to avoid event-loop blocking
+const dirSizeCache = new Map<string, { size: number; timestamp: number }>();
+
+function getDirSizeBytes(dirPath: string, maxDepth = 4, currentDepth = 0): number {
+  if (currentDepth > maxDepth) return 0;
   if (!fs.existsSync(dirPath)) return 0;
+
+  if (currentDepth === 0) {
+    const cached = dirSizeCache.get(dirPath);
+    if (cached && Date.now() - cached.timestamp < 30000) {
+      return cached.size;
+    }
+  }
+
+  let total = 0;
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
-        total += getDirSizeBytes(fullPath);
+        total += getDirSizeBytes(fullPath, maxDepth, currentDepth + 1);
       } else if (entry.isFile()) {
         try {
           total += fs.statSync(fullPath).size;
@@ -42,6 +53,11 @@ function getDirSizeBytes(dirPath: string): number {
       }
     }
   } catch {}
+
+  if (currentDepth === 0) {
+    dirSizeCache.set(dirPath, { size: total, timestamp: Date.now() });
+  }
+
   return total;
 }
 

@@ -373,8 +373,10 @@ Lists and paginates records in a collection.
 - **Query Parameters**:
   - `page` _(number, default: 1)_: Page number.
   - `limit` / `perPage` _(number, default: 20)_: Number of items per page.
-  - `filter` _(string)_: AlsaBase filter expression.
-  - `sort` _(string)_: Sort fields (`-created`, `title`, `-views`).
+  - `filter` _(string)_: AlsaBase filter expression (e.g. `id = "123"`, `title = "game"`, `price > 50`, `title ~ "hero" && status = "active"`).
+    - Supported Operators: `=`, `!=`, `~` (contains/LIKE), `!~` (not contains), `>`, `<`, `>=`, `<=`
+    - Supported Connectors: `&&` / `AND`, `||` / `OR`
+  - `sort` _(string)_: Sort fields (e.g. `-created`, `+created`, `-created_at`, `title`, `-updated`).
   - `expand` _(string)_: Comma-separated list of relation fields to expand.
   - `search` _(string)_: Search across text columns.
 

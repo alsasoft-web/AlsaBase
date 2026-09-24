@@ -200,6 +200,119 @@ export function ruleToSqlWhere(
   }
 }
 
+// Parses special filter expressions (e.g. id = 123 || title = "game" or price > 50) into safe parameterized SQL
+export function parseFilterExpression(
+  filterStr: string,
+  col: any
+): { sql?: string; params?: any[] } {
+  if (!filterStr || typeof filterStr !== 'string') return {};
+  const trimmed = filterStr.trim();
+  if (!trimmed) return {};
+
+  const validColMap = new Map<string, string>();
+  validColMap.set('id', 'id');
+  validColMap.set('created_at', 'created_at');
+  validColMap.set('updated_at', 'updated_at');
+  validColMap.set('created', 'created_at');
+  validColMap.set('updated', 'updated_at');
+  for (const f of col.fields || []) {
+    validColMap.set(f.name.toLowerCase(), f.name);
+  }
+
+  // Split on logical connectors (&&, ||, AND, OR)
+  const tokens = trimmed.split(/(\s+(?:&&|\|\||AND|OR)\s+)/i);
+  const clauses: { logic: 'AND' | 'OR'; expr: string }[] = [];
+  let nextLogic: 'AND' | 'OR' = 'AND';
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i].trim();
+    if (!t) continue;
+    const upper = t.toUpperCase();
+    if (upper === '&&' || upper === 'AND') {
+      nextLogic = 'AND';
+    } else if (upper === '||' || upper === 'OR') {
+      nextLogic = 'OR';
+    } else {
+      clauses.push({ logic: nextLogic, expr: t });
+    }
+  }
+
+  const sqlParts: string[] = [];
+  const params: any[] = [];
+
+  for (const item of clauses) {
+    // Match: column operator value
+    const match = item.expr.match(/^([a-zA-Z0-9_]+)\s*(=|==|!=|<>|~=|~|!~|>=|<=|>|<|LIKE|NOT\s+LIKE|ILIKE)\s*(.+)$/i);
+    if (!match) continue;
+
+    const rawCol = match[1].trim().toLowerCase();
+    const rawOp = match[2].trim().toUpperCase();
+    let valStr = match[3].trim();
+
+    const actualColName = validColMap.get(rawCol);
+    if (!actualColName) continue;
+
+    // Strip outer quotes if provided
+    if (
+      (valStr.startsWith('"') && valStr.endsWith('"')) ||
+      (valStr.startsWith("'") && valStr.endsWith("'"))
+    ) {
+      valStr = valStr.slice(1, -1);
+    }
+
+    let sqlOp = '=';
+    let paramVal: any = valStr;
+
+    if (rawOp === '=' || rawOp === '==') {
+      if (valStr.toLowerCase() === 'null') {
+        if (sqlParts.length > 0) sqlParts.push(item.logic);
+        sqlParts.push(`"${actualColName}" IS NULL`);
+        continue;
+      }
+      sqlOp = '=';
+      paramVal = valStr;
+    } else if (rawOp === '!=' || rawOp === '<>') {
+      if (valStr.toLowerCase() === 'null') {
+        if (sqlParts.length > 0) sqlParts.push(item.logic);
+        sqlParts.push(`"${actualColName}" IS NOT NULL`);
+        continue;
+      }
+      sqlOp = '!=';
+      paramVal = valStr;
+    } else if (rawOp === '~' || rawOp === '~=' || rawOp === 'LIKE' || rawOp === 'ILIKE') {
+      sqlOp = 'LIKE';
+      paramVal = `%${valStr}%`;
+    } else if (rawOp === '!~' || rawOp === 'NOT LIKE') {
+      sqlOp = 'NOT LIKE';
+      paramVal = `%${valStr}%`;
+    } else if (rawOp === '>=' || rawOp === '<=' || rawOp === '>' || rawOp === '<') {
+      sqlOp = rawOp;
+      paramVal = valStr;
+    }
+
+    // Type coercion
+    const fieldDef = (col.fields || []).find((f: FieldDef) => f.name === actualColName);
+    if (fieldDef && fieldDef.type === 'number' && !isNaN(Number(paramVal))) {
+      paramVal = Number(paramVal);
+    } else if (fieldDef && fieldDef.type === 'bool') {
+      paramVal = paramVal === true || paramVal === 'true' || paramVal === '1' || paramVal === 1 ? 1 : 0;
+    }
+
+    if (sqlParts.length > 0) {
+      sqlParts.push(item.logic);
+    }
+    sqlParts.push(`"${actualColName}" ${sqlOp} ?`);
+    params.push(paramVal);
+  }
+
+  if (sqlParts.length === 0) return {};
+
+  return {
+    sql: `(${sqlParts.join(' ')})`,
+    params,
+  };
+}
+
 // Convert input values according to field definition
 function formatFieldValue(field: FieldDef, value: any): any {
   if (value === undefined || value === null) return null;
@@ -368,80 +481,126 @@ collectionsRouter.delete('/:name/indexes/:indexName', requireSuperuser, (req: Re
 
 // List records with pagination, search, sort, and filter
 collectionsRouter.get('/:collection/records', (req: Request, res: Response) => {
-  const collectionName = getParam(req.params.collection);
-  const col = getCollection(collectionName);
-  if (!col) return res.status(404).json({ error: `Collection '${collectionName}' not found` });
+  try {
+    const collectionName = getParam(req.params.collection);
+    const col = getCollection(collectionName);
+    if (!col) return res.status(404).json({ error: `Collection '${collectionName}' not found` });
 
-  const auth = (req as any).auth as AuthPayload | undefined;
-  const ruleCheck = ruleToSqlWhere(col.rules?.list, auth);
-  if (!ruleCheck.allowed) {
-    return res.status(403).json({ error: 'Access denied to list records', code: 403 });
-  }
-
-  const page = Math.max(1, parseInt(req.query.page as string) || 1);
-  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 30));
-  const offset = (page - 1) * limit;
-
-  // Sorting
-  const sortParam = (req.query.sort as string) || '-created_at';
-  const isDesc = sortParam.startsWith('-');
-  const sortField = sanitizeIdentifier(sortParam.replace(/^[-+]/, ''));
-  const sortOrder = isDesc ? 'DESC' : 'ASC';
-
-  // Search & Filter
-  const whereClauses: string[] = [];
-  const params: any[] = [];
-
-  if (ruleCheck.sql) {
-    whereClauses.push(ruleCheck.sql);
-    if (ruleCheck.params && ruleCheck.params.length > 0) {
-      params.push(...ruleCheck.params);
+    const auth = (req as any).auth as AuthPayload | undefined;
+    const ruleCheck = ruleToSqlWhere(col.rules?.list, auth);
+    if (!ruleCheck.allowed) {
+      return res.status(403).json({ error: 'Access denied to list records', code: 403 });
     }
-  }
 
-  const searchQuery = req.query.search as string;
-  if (searchQuery && col.fields.length > 0) {
-    const textFields = col.fields.filter((f: FieldDef) => f.type === 'text');
-    if (textFields.length > 0) {
-      const searchTerms = textFields.map((f: FieldDef) => `"${f.name}" LIKE ?`).join(' OR ');
-      whereClauses.push(`(${searchTerms})`);
-      for (let i = 0; i < textFields.length; i++) {
-        params.push(`%${searchQuery}%`);
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 30));
+    const offset = (page - 1) * limit;
+
+    // Sorting
+    const sortParam = (req.query.sort as string) || '-created_at';
+    const isDesc = sortParam.startsWith('-');
+    let rawSortField = sortParam.replace(/^[-+]/, '');
+    if (rawSortField === 'created') rawSortField = 'created_at';
+    if (rawSortField === 'updated') rawSortField = 'updated_at';
+    let sortField = 'created_at';
+    try {
+      sortField = sanitizeIdentifier(rawSortField);
+    } catch {
+      sortField = 'created_at';
+    }
+    const sortOrder = isDesc ? 'DESC' : 'ASC';
+
+    // Search & Filter
+    const whereClauses: string[] = [];
+    const params: any[] = [];
+
+    if (ruleCheck.sql) {
+      whereClauses.push(ruleCheck.sql);
+      if (ruleCheck.params && ruleCheck.params.length > 0) {
+        params.push(...ruleCheck.params);
       }
     }
-  }
 
-  // Exact match filters for field query params
-  for (const field of col.fields) {
-    if (req.query[field.name] !== undefined) {
-      whereClauses.push(`"${field.name}" = ?`);
-      params.push(formatFieldValue(field, req.query[field.name]));
+    const searchQuery = req.query.search as string;
+    if (searchQuery && col.fields.length > 0) {
+      const textFields = col.fields.filter((f: FieldDef) => f.type === 'text');
+      if (textFields.length > 0) {
+        const searchTerms = textFields.map((f: FieldDef) => `"${f.name}" LIKE ?`).join(' OR ');
+        whereClauses.push(`(${searchTerms})`);
+        for (let i = 0; i < textFields.length; i++) {
+          params.push(`%${searchQuery}%`);
+        }
+      }
     }
+
+    // Support explicit id filter in query parameter ?id=123
+    if (req.query.id !== undefined && req.query.id !== '') {
+      whereClauses.push(`"id" = ?`);
+      params.push(String(req.query.id));
+    }
+
+    // Exact match filters for field query params
+    for (const field of col.fields) {
+      if (req.query[field.name] !== undefined && req.query[field.name] !== '') {
+        whereClauses.push(`"${field.name}" = ?`);
+        params.push(formatFieldValue(field, req.query[field.name]));
+      }
+    }
+
+    // Special filter expression (e.g. ?filter=id = 123 || title = "game")
+    const filterQuery = req.query.filter as string;
+    if (filterQuery && typeof filterQuery === 'string' && filterQuery.trim() !== '') {
+      try {
+        const parsed = parseFilterExpression(filterQuery, col);
+        if (parsed.sql) {
+          whereClauses.push(parsed.sql);
+          if (parsed.params && parsed.params.length > 0) {
+            params.push(...parsed.params);
+          }
+        }
+      } catch (filterErr: any) {
+        console.warn(`[Filter Parse Error]`, filterErr?.message);
+      }
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+    const countRow = db.prepare(`SELECT COUNT(*) as total FROM "${col.name}" ${whereSql}`).get(...params) as { total: number };
+    const total = countRow ? countRow.total : 0;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    let rows: any[] = [];
+    try {
+      rows = db.prepare(`
+        SELECT * FROM "${col.name}"
+        ${whereSql}
+        ORDER BY "${sortField}" ${sortOrder}
+        LIMIT ? OFFSET ?
+      `).all(...params, limit, offset) as any[];
+    } catch {
+      // Fallback order by created_at DESC in case sort column is invalid on SQLite
+      rows = db.prepare(`
+        SELECT * FROM "${col.name}"
+        ${whereSql}
+        ORDER BY "created_at" DESC
+        LIMIT ? OFFSET ?
+      `).all(...params, limit, offset) as any[];
+    }
+
+    const isAuth = col.type === 'auth' || col.name === 'users';
+    const formattedItems = rows.map((r) => formatRecordOutput(col.fields, r, auth, isAuth));
+
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages,
+      items: formattedItems
+    });
+  } catch (err: any) {
+    console.error(`[Records Error]`, err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
   }
-
-  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-
-  const countRow = db.prepare(`SELECT COUNT(*) as total FROM "${col.name}" ${whereSql}`).get(...params) as { total: number };
-  const total = countRow ? countRow.total : 0;
-  const totalPages = Math.ceil(total / limit) || 1;
-
-  const rows = db.prepare(`
-    SELECT * FROM "${col.name}"
-    ${whereSql}
-    ORDER BY "${sortField}" ${sortOrder}
-    LIMIT ? OFFSET ?
-  `).all(...params, limit, offset) as any[];
-
-  const isAuth = col.type === 'auth' || col.name === 'users';
-  const formattedItems = rows.map((r) => formatRecordOutput(col.fields, r, auth, isAuth));
-
-  res.json({
-    page,
-    limit,
-    total,
-    totalPages,
-    items: formattedItems
-  });
 });
 
 // Get single record

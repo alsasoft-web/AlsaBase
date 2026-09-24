@@ -428,6 +428,7 @@ export const api = {
       limit?: number;
       search?: string;
       sort?: string;
+      filter?: string;
     } = {},
   ) {
     const params = new URLSearchParams();
@@ -435,6 +436,7 @@ export const api = {
     if (query.limit) params.set("limit", String(query.limit));
     if (query.search) params.set("search", query.search);
     if (query.sort) params.set("sort", query.sort);
+    if (query.filter) params.set("filter", query.filter);
 
     return request<PaginatedResult<any>>(
       `/collections/${collectionName}/records?${params.toString()}`,
