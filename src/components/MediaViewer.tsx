@@ -20,6 +20,7 @@ import {
   IconCode,
 } from "@tabler/icons-react";
 import { notifications } from "@mantine/notifications";
+import { copyToClipboard } from "../utils/clipboard";
 
 export interface MediaViewerProps {
   filename: string;
@@ -174,8 +175,8 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
     setIsDragging(false);
   };
 
-  const handleCopyPath = () => {
-    navigator.clipboard.writeText(filename);
+  const handleCopyPath = async () => {
+    await copyToClipboard(filename);
     notifications.show({
       title: "Path Copied",
       message: filename,

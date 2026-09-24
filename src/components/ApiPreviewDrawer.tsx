@@ -13,6 +13,7 @@ import {
 } from "@mantine/core";
 import { IconX, IconCopy, IconCheck } from "@tabler/icons-react";
 import { CollectionDef } from "../api/client";
+import { copyToClipboard } from "../utils/clipboard";
 
 interface ApiPreviewDrawerProps {
   opened: boolean;
@@ -576,8 +577,8 @@ await alsa.collection('${colName}').confirmEmailChange('TOKEN', 'PASSWORD');`,
         ? endpointData.dart
         : endpointData.curl;
 
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(currentCode);
+  const handleCopyCode = async () => {
+    await copyToClipboard(currentCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

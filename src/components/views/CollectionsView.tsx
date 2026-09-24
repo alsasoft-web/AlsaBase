@@ -87,6 +87,7 @@ import {
   FieldType,
   TableIndexInfo,
 } from "../../api/client";
+import { copyToClipboard } from "../../utils/clipboard";
 
 export interface OAuth2ProviderConfig {
   name: string;
@@ -1853,10 +1854,10 @@ export const CollectionsView: React.FC = () => {
                                   withArrow
                                   position="top"
                                 >
-                                  <Code
-                                    onClick={(e) => {
+                                   <Code
+                                    onClick={async (e) => {
                                       e.stopPropagation();
-                                      navigator.clipboard.writeText(rec.id);
+                                      await copyToClipboard(rec.id);
                                       notifications.show({
                                         message:
                                           "Copied record ID to clipboard",
@@ -2175,8 +2176,8 @@ export const CollectionsView: React.FC = () => {
                                     </Menu.Item>
                                     <Menu.Item
                                       leftSection={<IconCopy size={13} />}
-                                      onClick={() => {
-                                        navigator.clipboard.writeText(
+                                      onClick={async () => {
+                                        await copyToClipboard(
                                           JSON.stringify(rec, null, 2),
                                         );
                                         notifications.show({

@@ -52,6 +52,7 @@ import {
   subscribeLogs,
   onRealtimeStatus,
 } from "../../api/client";
+import { copyToClipboard } from "../../utils/clipboard";
 
 export const LogsView: React.FC = () => {
   const computedColorScheme = useComputedColorScheme("dark", {
@@ -270,8 +271,8 @@ export const LogsView: React.FC = () => {
     includeSuperusers,
   ]);
 
-  const handleCopy = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopy = async (text: string, key: string) => {
+    await copyToClipboard(text);
     setCopiedKey(key);
     notifications.show({
       title: "Copied to Clipboard",

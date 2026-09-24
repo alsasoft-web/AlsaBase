@@ -52,8 +52,8 @@ import {
 } from "../../api/client";
 import { NpmPackagesModal } from "../NpmPackagesModal";
 import { VSCodeFileTree } from "../VSCodeFileTree";
-import { FileIcon } from "../FileIcon";
 import { MediaViewer, isMediaFilename } from "../MediaViewer";
+import { copyToClipboard } from "../../utils/clipboard";
 
 interface BodyFieldRow {
   id: string;
@@ -2675,8 +2675,8 @@ export const HooksView: React.FC = () => {
                             size="xs"
                             variant="subtle"
                             color="gray"
-                            onClick={() => {
-                              navigator.clipboard.writeText(cmd.usage || "");
+                            onClick={async () => {
+                              await copyToClipboard(cmd.usage || "");
                               notifications.show({
                                 title: "Copied",
                                 message: "Usage command copied to clipboard",
@@ -3763,8 +3763,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                       size="xs"
                       variant="subtle"
                       color="gray"
-                      onClick={() => {
-                        navigator.clipboard.writeText(
+                      onClick={async () => {
+                        await copyToClipboard(
                           selectedCommand.usage || "",
                         );
                         notifications.show({
@@ -3942,8 +3942,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                   variant="subtle"
                   size="sm"
                   leftSection={<IconCopy size={14} />}
-                  onClick={() => {
-                    navigator.clipboard.writeText(commandOutput.join("\n"));
+                  onClick={async () => {
+                    await copyToClipboard(commandOutput.join("\n"));
                     notifications.show({
                       title: "Copied",
                       message: "Terminal output copied to clipboard",
@@ -4179,8 +4179,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                   variant="subtle"
                   size="sm"
                   leftSection={<IconCopy size={14} />}
-                  onClick={() => {
-                    navigator.clipboard.writeText(cronOutput.join("\n"));
+                  onClick={async () => {
+                    await copyToClipboard(cronOutput.join("\n"));
                     notifications.show({
                       title: "Copied",
                       message: "Cron log output copied to clipboard",
