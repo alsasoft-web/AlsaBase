@@ -50,7 +50,7 @@ COPY tsconfig.server.json ./
 COPY tsconfig.json ./
 
 # Create directories for persistent SQLite data, backups, hooks, and static files
-RUN mkdir -p /app/data /app/backups /app/_hooks /app/_public
+RUN mkdir -p /app/data/backups /app/_hooks /app/_public
 
 # Expose HTTP port
 EXPOSE 8090

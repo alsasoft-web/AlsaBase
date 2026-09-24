@@ -12,14 +12,12 @@ services:
       - NODE_ENV=production
       - JWT_SECRET=${JWT_SECRET:-replace_with_a_secure_random_jwt_secret_in_production}
     volumes:
-      # Persistent SQLite database storage
+      # Persistent SQLite database storage and backups (saved to data/backups)
       - ./data:/app/data
       # Serverless TypeScript/JavaScript hooks
       - ./_hooks:/app/_hooks
       # Public static web assets & SPA hosting
       - ./_public:/app/_public
-      # Automatic database backups and snapshots
-      - ./backups:/app/backups
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/health"]
       interval: 30s
