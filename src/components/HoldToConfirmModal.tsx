@@ -27,7 +27,7 @@ export interface HoldToConfirmButtonProps {
 
 export const HoldToConfirmButton: React.FC<HoldToConfirmButtonProps> = ({
   onConfirm,
-  holdDurationMs = 5000,
+  holdDurationMs = 2000,
   label = "Hold to Confirm",
   color = "red",
   disabled = false,
@@ -41,7 +41,7 @@ export const HoldToConfirmButton: React.FC<HoldToConfirmButtonProps> = ({
   const [isHolding, setIsHolding] = useState(false);
   const [isCompleted, setIsCompleted] = useState(false);
   const [remainingSec, setRemainingSec] = useState(
-    (holdDurationMs / 1000).toFixed(1)
+    (holdDurationMs / 1000).toFixed(1),
   );
 
   const startTimeRef = useRef<number | null>(null);
@@ -86,20 +86,21 @@ export const HoldToConfirmButton: React.FC<HoldToConfirmButtonProps> = ({
         animationFrameRef.current = requestAnimationFrame(tick);
       }
     },
-    [holdDurationMs, onConfirm]
+    [holdDurationMs, onConfirm],
   );
 
   const startHold = useCallback(
     (e: React.MouseEvent | React.TouchEvent | React.KeyboardEvent) => {
       if (disabled || isCompleted || hasTriggeredRef.current) return;
-      if (e.type === "mousedown" && (e as React.MouseEvent).button !== 0) return;
+      if (e.type === "mousedown" && (e as React.MouseEvent).button !== 0)
+        return;
 
       setIsHolding(true);
       hasTriggeredRef.current = false;
       startTimeRef.current = performance.now();
       animationFrameRef.current = requestAnimationFrame(tick);
     },
-    [disabled, isCompleted, tick]
+    [disabled, isCompleted, tick],
   );
 
   useEffect(() => {
@@ -116,12 +117,12 @@ export const HoldToConfirmButton: React.FC<HoldToConfirmButtonProps> = ({
         ? "#7f1d1d"
         : "#b91c1c"
       : color === "orange"
-      ? isDark
-        ? "#7c2d12"
-        : "#c2410c"
-      : isDark
-      ? "#1e293b"
-      : "#334155";
+        ? isDark
+          ? "#7c2d12"
+          : "#c2410c"
+        : isDark
+          ? "#1e293b"
+          : "#334155";
 
   const progressFillColor =
     color === "red" ? "#ef4444" : color === "orange" ? "#f97316" : "#3b82f6";
@@ -214,8 +215,8 @@ export const HoldToConfirmButton: React.FC<HoldToConfirmButtonProps> = ({
           {isCompleted
             ? "Confirmed!"
             : isHolding
-            ? `Hold... ${remainingSec}s`
-            : `${label} (${Math.round(holdDurationMs / 1000)}s)`}
+              ? `Hold... ${remainingSec}s`
+              : `${label} (${Math.round(holdDurationMs / 1000)}s)`}
         </span>
       </Button>
     </div>
@@ -249,7 +250,7 @@ const HoldToConfirmModalContent: React.FC<ModalContentProps> = ({
   children,
   labels,
   confirmProps,
-  holdDurationMs = 5000,
+  holdDurationMs = 2000,
   onConfirm,
   onCancel,
 }) => {
@@ -308,7 +309,11 @@ const HoldToConfirmModalContent: React.FC<ModalContentProps> = ({
           )}
         </Box>
         <Stack gap={1} style={{ flex: 1 }}>
-          <Text fw={700} size="md" style={{ color: "var(--color-text-primary)" }}>
+          <Text
+            fw={700}
+            size="md"
+            style={{ color: "var(--color-text-primary)" }}
+          >
             {title || "Confirm Deletion"}
           </Text>
           <Badge
@@ -370,7 +375,9 @@ const HoldToConfirmModalContent: React.FC<ModalContentProps> = ({
 /**
  * Global helper to open a Hold-to-Confirm modal that requires holding the confirm button for 5 seconds.
  */
-export function openHoldToConfirmModal(options: HoldToConfirmModalOptions): string {
+export function openHoldToConfirmModal(
+  options: HoldToConfirmModalOptions,
+): string {
   const modalId = `hold-confirm-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 7)}`;
