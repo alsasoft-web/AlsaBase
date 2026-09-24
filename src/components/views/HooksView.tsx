@@ -38,6 +38,10 @@ import {
   IconTerminal2,
   IconCopy,
   IconSearch,
+  IconTrash,
+  IconBraces,
+  IconList,
+  IconSparkles,
 } from "@tabler/icons-react";
 import Editor, { OnMount } from "@monaco-editor/react";
 import {
@@ -51,19 +55,98 @@ import { VSCodeFileTree } from "../VSCodeFileTree";
 import { FileIcon } from "../FileIcon";
 import { MediaViewer, isMediaFilename } from "../MediaViewer";
 
+interface BodyFieldRow {
+  id: string;
+  key: string;
+  value: string;
+  type: "string" | "number" | "boolean" | "json";
+}
+
+function parseJsonToFields(jsonStr: string): BodyFieldRow[] {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const rows: BodyFieldRow[] = Object.entries(parsed).map(([k, v], idx) => {
+        let type: "string" | "number" | "boolean" | "json" = "string";
+        let strVal = String(v ?? "");
+        if (typeof v === "number") {
+          type = "number";
+        } else if (typeof v === "boolean") {
+          type = "boolean";
+        } else if (typeof v === "object" && v !== null) {
+          type = "json";
+          strVal = JSON.stringify(v);
+        }
+        return {
+          id: String(Date.now() + idx + Math.random()),
+          key: k,
+          value: strVal,
+          type,
+        };
+      });
+      if (rows.length > 0) return rows;
+    }
+  } catch {}
+  return [{ id: String(Date.now()), key: "", value: "", type: "string" }];
+}
+
+function fieldsToJson(fields: BodyFieldRow[]): string {
+  const obj: Record<string, any> = {};
+  for (const f of fields) {
+    const k = f.key.trim();
+    if (!k) continue;
+    if (f.type === "number") {
+      const num = Number(f.value);
+      obj[k] = isNaN(num) ? f.value : num;
+    } else if (f.type === "boolean") {
+      obj[k] = f.value === "true" || f.value === "1";
+    } else if (f.type === "json") {
+      try {
+        obj[k] = JSON.parse(f.value);
+      } catch {
+        obj[k] = f.value;
+      }
+    } else {
+      obj[k] = f.value;
+    }
+  }
+  return JSON.stringify(obj, null, 2);
+}
+
 function getLanguage(filename: string | null): string {
   if (!filename) return "javascript";
   const lower = filename.toLowerCase();
   if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "typescript";
-  if (lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) return "javascript";
-  if (lower.endsWith(".json") || lower.endsWith(".json5") || lower.endsWith(".jsonc")) return "json";
+  if (
+    lower.endsWith(".js") ||
+    lower.endsWith(".jsx") ||
+    lower.endsWith(".mjs") ||
+    lower.endsWith(".cjs")
+  )
+    return "javascript";
+  if (
+    lower.endsWith(".json") ||
+    lower.endsWith(".json5") ||
+    lower.endsWith(".jsonc")
+  )
+    return "json";
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
-  if (lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less")) return "css";
+  if (
+    lower.endsWith(".css") ||
+    lower.endsWith(".scss") ||
+    lower.endsWith(".less")
+  )
+    return "css";
   if (lower.endsWith(".sql")) return "sql";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
   if (lower.endsWith(".yaml") || lower.endsWith(".yml")) return "yaml";
   if (lower.endsWith(".xml") || lower.endsWith(".svg")) return "xml";
-  if (lower.endsWith(".sh") || lower.endsWith(".bash") || lower.endsWith(".zsh")) return "shell";
+  if (
+    lower.endsWith(".sh") ||
+    lower.endsWith(".bash") ||
+    lower.endsWith(".zsh")
+  )
+    return "shell";
   if (lower.endsWith(".py")) return "python";
   if (lower.endsWith(".env") || lower.includes(".env.")) return "ini";
   if (lower.endsWith(".txt") || lower.endsWith(".log")) return "plaintext";
@@ -73,17 +156,21 @@ function getLanguage(filename: string | null): string {
 function getFileTypeLabel(filename: string | null): string {
   if (!filename) return "File";
   const lower = filename.toLowerCase();
-  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) return "Serverless ES6 Module";
-  if (lower.endsWith(".ts") || lower.endsWith(".tsx")) return "TypeScript Module";
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs"))
+    return "Serverless ES6 Module";
+  if (lower.endsWith(".ts") || lower.endsWith(".tsx"))
+    return "TypeScript Module";
   if (lower.endsWith(".json")) return "JSON Data";
   if (lower.endsWith(".sql")) return "SQL Script";
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "HTML Document";
   if (lower.endsWith(".css")) return "Stylesheet";
   if (lower.endsWith(".md")) return "Markdown Document";
-  if (lower.endsWith(".yaml") || lower.endsWith(".yml")) return "YAML Configuration";
+  if (lower.endsWith(".yaml") || lower.endsWith(".yml"))
+    return "YAML Configuration";
   if (lower.endsWith(".sh")) return "Shell Script";
   if (lower.endsWith(".py")) return "Python Script";
-  if (lower.endsWith(".env") || lower.includes(".env.")) return "Environment Config";
+  if (lower.endsWith(".env") || lower.includes(".env."))
+    return "Environment Config";
   return "Resource File";
 }
 
@@ -239,8 +326,12 @@ export const HooksView: React.FC = () => {
   const [testingRoute, setTestingRoute] = useState<HookRouteDef | null>(null);
   const [testMethod, setTestMethod] = useState("GET");
   const [testRequestBody, setTestRequestBody] = useState(
-    '{\n  "test": true\n}',
+    '{\n  "test": "test"\n}',
   );
+  const [testBodyMode, setTestBodyMode] = useState<"fields" | "json">("fields");
+  const [testBodyFields, setTestBodyFields] = useState<BodyFieldRow[]>([
+    { id: "1", key: "test", value: "test", type: "string" },
+  ]);
   const [testResult, setTestResult] = useState<any>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [routesSearchQuery, setRoutesSearchQuery] = useState("");
@@ -279,7 +370,9 @@ export const HooksView: React.FC = () => {
   const [cronRunning, setCronRunning] = useState(false);
   const [cronOutput, setCronOutput] = useState<string[]>([]);
   const [cronDuration, setCronDuration] = useState<number | null>(null);
-  const [cronStatus, setCronStatus] = useState<"SUCCESS" | "ERROR" | null>(null);
+  const [cronStatus, setCronStatus] = useState<"SUCCESS" | "ERROR" | null>(
+    null,
+  );
   const [cronError, setCronError] = useState<string | null>(null);
   const cronTerminalEndRef = useRef<HTMLDivElement>(null);
   const cronAbortControllerRef = useRef<AbortController | null>(null);
@@ -309,7 +402,9 @@ export const HooksView: React.FC = () => {
   }, [cronModalOpen, cronRunning]);
 
   // CLI Command Runner State
-  const [selectedCommand, setSelectedCommand] = useState<HookCommandDef | null>(null);
+  const [selectedCommand, setSelectedCommand] = useState<HookCommandDef | null>(
+    null,
+  );
   const [commandModalOpen, setCommandModalOpen] = useState(false);
   const [commandArgs, setCommandArgs] = useState("");
   const [commandRunning, setCommandRunning] = useState(false);
@@ -719,8 +814,83 @@ export const HooksView: React.FC = () => {
     setTestingRoute(route);
     setTestMethod(route.method === "ALL" ? "GET" : route.method);
     setTestResult(null);
-    setTestRequestBody('{\n  "sample": "data"\n}');
+    const initialJson = '{\n  "test": "test"\n}';
+    setTestRequestBody(initialJson);
+    setTestBodyFields(parseJsonToFields(initialJson));
+    setTestBodyMode("fields");
     setTestRouteModalOpen(true);
+  };
+
+  const handleToggleBodyMode = (mode: "fields" | "json") => {
+    if (mode === "json") {
+      const json = fieldsToJson(testBodyFields);
+      setTestRequestBody(json);
+    } else {
+      const fields = parseJsonToFields(testRequestBody);
+      setTestBodyFields(fields);
+    }
+    setTestBodyMode(mode);
+  };
+
+  const handleUpdateField = (
+    id: string,
+    key: string,
+    value: string,
+    type: "string" | "number" | "boolean" | "json",
+  ) => {
+    setTestBodyFields((prev) => {
+      const updated = prev.map((f) =>
+        f.id === id ? { ...f, key, value, type } : f,
+      );
+      setTestRequestBody(fieldsToJson(updated));
+      return updated;
+    });
+  };
+
+  const handleAddField = () => {
+    setTestBodyFields((prev) => [
+      ...prev,
+      {
+        id: String(Date.now() + Math.random()),
+        key: "",
+        value: "",
+        type: "string" as const,
+      },
+    ]);
+  };
+
+  const handleRemoveField = (id: string) => {
+    setTestBodyFields((prev) => {
+      const updated = prev.filter((f) => f.id !== id);
+      const nextFields: BodyFieldRow[] =
+        updated.length > 0
+          ? updated
+          : [
+              {
+                id: String(Date.now()),
+                key: "",
+                value: "",
+                type: "string" as const,
+              },
+            ];
+      setTestRequestBody(fieldsToJson(nextFields));
+      return nextFields;
+    });
+  };
+
+  const handleFormatJson = () => {
+    try {
+      const parsed = JSON.parse(testRequestBody);
+      const formatted = JSON.stringify(parsed, null, 2);
+      setTestRequestBody(formatted);
+      setTestBodyFields(parseJsonToFields(formatted));
+    } catch {
+      notifications.show({
+        title: "Invalid JSON",
+        message: "Cannot format invalid JSON string.",
+        color: "red",
+      });
+    }
   };
 
   const handleExecuteTestRoute = async () => {
@@ -745,15 +915,13 @@ export const HooksView: React.FC = () => {
         headers,
       };
 
-      if (
-        ["POST", "PUT", "PATCH"].includes(testMethod) &&
-        testRequestBody.trim()
-      ) {
-        try {
-          JSON.parse(testRequestBody);
-          options.body = testRequestBody;
-        } catch {
-          options.body = testRequestBody;
+      if (["POST", "PUT", "PATCH"].includes(testMethod)) {
+        let payload = testRequestBody;
+        if (testBodyMode === "fields") {
+          payload = fieldsToJson(testBodyFields);
+        }
+        if (payload && payload.trim() && payload.trim() !== "{}") {
+          options.body = payload;
         }
       }
 
@@ -951,10 +1119,7 @@ export const HooksView: React.FC = () => {
     }
   };
 
-  const handleOpenCommandModal = (
-    cmd: HookCommandDef,
-    initialArgs = "",
-  ) => {
+  const handleOpenCommandModal = (cmd: HookCommandDef, initialArgs = "") => {
     setSelectedCommand(cmd);
     setCommandArgs(initialArgs);
     setCommandOutput([]);
@@ -1026,7 +1191,11 @@ export const HooksView: React.FC = () => {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ name: targetName, args: targetArgs, executionId: execId }),
+        body: JSON.stringify({
+          name: targetName,
+          args: targetArgs,
+          executionId: execId,
+        }),
       });
 
       if (!response.ok) {
@@ -1415,7 +1584,10 @@ export const HooksView: React.FC = () => {
                 setOpenFiles((prev) =>
                   prev.filter((f) => !f.startsWith(folderPath + "/")),
                 );
-                if (selectedFileName && selectedFileName.startsWith(folderPath + "/")) {
+                if (
+                  selectedFileName &&
+                  selectedFileName.startsWith(folderPath + "/")
+                ) {
                   setSelectedFileName(null);
                   setFileContent("");
                   setSavedContent("");
@@ -1609,7 +1781,9 @@ export const HooksView: React.FC = () => {
                     {selectedFileName}
                   </span>
                   <span>›</span>
-                  <span style={{ opacity: 0.7 }}>{getFileTypeLabel(selectedFileName)}</span>
+                  <span style={{ opacity: 0.7 }}>
+                    {getFileTypeLabel(selectedFileName)}
+                  </span>
                 </div>
               )}
 
@@ -1637,7 +1811,11 @@ export const HooksView: React.FC = () => {
                       gap: 8,
                     }}
                   >
-                    <Group gap={8} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+                    <Group
+                      gap={8}
+                      wrap="nowrap"
+                      style={{ flex: 1, minWidth: 0 }}
+                    >
                       <Badge
                         color="red"
                         variant="filled"
@@ -1650,11 +1828,18 @@ export const HooksView: React.FC = () => {
                         size="xs"
                         fw={700}
                         c="red"
-                        style={{ fontFamily: "var(--font-mono)", flexShrink: 0 }}
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          flexShrink: 0,
+                        }}
                       >
                         {activeFileStatus.filename}
-                        {activeFileStatus.errorLine ? `:${activeFileStatus.errorLine}` : ""}
-                        {activeFileStatus.errorCol ? `:${activeFileStatus.errorCol}` : ""}
+                        {activeFileStatus.errorLine
+                          ? `:${activeFileStatus.errorLine}`
+                          : ""}
+                        {activeFileStatus.errorCol
+                          ? `:${activeFileStatus.errorCol}`
+                          : ""}
                       </Text>
                       <Text
                         size="xs"
@@ -1727,13 +1912,20 @@ export const HooksView: React.FC = () => {
                 }}
               >
                 {selectedFileName ? (
-                  isMediaFilename(selectedFileName).isMedia && !editSvgAsCode ? (
+                  isMediaFilename(selectedFileName).isMedia &&
+                  !editSvgAsCode ? (
                     <MediaViewer
                       filename={selectedFileName}
                       src={`/api/hooks/files/raw?path=${encodeURIComponent(selectedFileName)}`}
-                      sizeBytes={overview?.files?.find((f) => (f.filename || f.name) === selectedFileName)?.sizeBytes}
+                      sizeBytes={
+                        overview?.files?.find(
+                          (f) => (f.filename || f.name) === selectedFileName,
+                        )?.sizeBytes
+                      }
                       isDark={isDark}
-                      showCodeToggle={selectedFileName.toLowerCase().endsWith(".svg")}
+                      showCodeToggle={selectedFileName
+                        .toLowerCase()
+                        .endsWith(".svg")}
                       onSwitchToCode={() => {
                         setEditSvgAsCode(true);
                         loadFileContent(selectedFileName, true);
@@ -1854,7 +2046,8 @@ export const HooksView: React.FC = () => {
                     : isDark
                       ? "#10e57a"
                       : "#059669",
-                  color: isDark && !activeFileStatus?.error ? "#052e16" : "#ffffff",
+                  color:
+                    isDark && !activeFileStatus?.error ? "#052e16" : "#ffffff",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
@@ -1937,7 +2130,8 @@ export const HooksView: React.FC = () => {
                     fontFamily: "var(--font-mono)",
                   }}
                 >
-                  {overview?.routes?.length || 0} total in {groupedRoutes.length}{" "}
+                  {overview?.routes?.length || 0} total in{" "}
+                  {groupedRoutes.length}{" "}
                   {groupedRoutes.length === 1 ? "file" : "files"}
                 </Badge>
               </Group>
@@ -2247,7 +2441,9 @@ export const HooksView: React.FC = () => {
                           size="xs"
                           variant="subtle"
                           leftSection={<IconPlayerPlay size={12} />}
-                          loading={cronRunning && selectedCron?.name === cronDef.name}
+                          loading={
+                            cronRunning && selectedCron?.name === cronDef.name
+                          }
                           onClick={() => handleExecuteCron(cronDef)}
                           style={{
                             backgroundColor: "var(--color-neon-dim)",
@@ -2320,14 +2516,13 @@ export const HooksView: React.FC = () => {
                       }}
                     >
                       {overview?.commands?.length || 0}{" "}
-                      {overview?.commands?.length === 1
-                        ? "Script"
-                        : "Scripts"}
+                      {overview?.commands?.length === 1 ? "Script" : "Scripts"}
                     </Badge>
                   </Group>
                   <Text size="xs" c="dimmed" mt={4}>
                     Execute standalone Node.js CLI scripts or custom hook
-                    commands in _hooks/ with interactive parameters and live terminal logs.
+                    commands in _hooks/ with interactive parameters and live
+                    terminal logs.
                   </Text>
                 </div>
 
@@ -2609,7 +2804,7 @@ export const HooksView: React.FC = () => {
                       }}
                     >
                       <TextInput
-                        placeholder="Quick arguments (e.g. --list or --game elden-ring)"
+                        placeholder="Quick arguments (e.g. --list)"
                         size="xs"
                         style={{ flex: 1 }}
                         styles={{
@@ -2692,9 +2887,15 @@ export const HooksView: React.FC = () => {
                     >
                       No CLI Scripts or Commands Found
                     </Title>
-                    <Text size="sm" c="dimmed" mt={6} style={{ maxWidth: 460, margin: "0 auto" }}>
-                      Place standalone executable scripts (such as download_mapgenie.mjs)
-                      or register custom commands with commandAdd in _hooks/ to run them directly from here.
+                    <Text
+                      size="sm"
+                      c="dimmed"
+                      mt={6}
+                      style={{ maxWidth: 460, margin: "0 auto" }}
+                    >
+                      Place standalone executable scripts (such as
+                      sync_data.mjs) or register custom commands with
+                      commandAdd in _hooks/ to run them directly from here.
                     </Text>
                   </Card>
                 )}
@@ -3195,13 +3396,230 @@ cronAdd("daily_summary", "0 0 * * *", () => {
             </Group>
 
             {["POST", "PUT", "PATCH"].includes(testMethod) && (
-              <Textarea
-                label="JSON Request Body"
-                value={testRequestBody}
-                onChange={(e) => setTestRequestBody(e.target.value)}
-                rows={4}
-                styles={{ input: { fontFamily: "var(--font-mono)" } }}
-              />
+              <Stack gap="xs">
+                <Group justify="space-between" align="center">
+                  <Text
+                    size="xs"
+                    fw={600}
+                    style={{ color: "var(--color-text-secondary)" }}
+                  >
+                    Request Body
+                  </Text>
+                  <SegmentedControl
+                    size="xs"
+                    value={testBodyMode}
+                    onChange={(val: any) => handleToggleBodyMode(val)}
+                    data={[
+                      {
+                        label: (
+                          <Group gap={4}>
+                            <IconList size={13} />
+                            <span>Fields</span>
+                          </Group>
+                        ),
+                        value: "fields",
+                      },
+                      {
+                        label: (
+                          <Group gap={4}>
+                            <IconBraces size={13} />
+                            <span>JSON</span>
+                          </Group>
+                        ),
+                        value: "json",
+                      },
+                    ]}
+                  />
+                </Group>
+
+                {testBodyMode === "fields" ? (
+                  <Paper
+                    p="sm"
+                    withBorder
+                    style={{
+                      background: "var(--color-bg-well)",
+                      borderColor: "var(--color-border)",
+                    }}
+                  >
+                    <Stack gap="xs">
+                      {testBodyFields.map((field) => (
+                        <Group key={field.id} gap="xs" align="center">
+                          <TextInput
+                            placeholder="Key"
+                            size="xs"
+                            value={field.key}
+                            onChange={(e) =>
+                              handleUpdateField(
+                                field.id,
+                                e.currentTarget.value,
+                                field.value,
+                                field.type,
+                              )
+                            }
+                            style={{ flex: 1.2 }}
+                            styles={{
+                              input: {
+                                fontFamily: "var(--font-mono)",
+                                fontSize: "12px",
+                              },
+                            }}
+                          />
+                          <Select
+                            size="xs"
+                            value={field.type}
+                            onChange={(val: any) => {
+                              const newType = val || "string";
+                              let valToSet = field.value;
+                              if (
+                                newType === "boolean" &&
+                                valToSet !== "true" &&
+                                valToSet !== "false"
+                              ) {
+                                valToSet = "true";
+                              }
+                              handleUpdateField(
+                                field.id,
+                                field.key,
+                                valToSet,
+                                newType,
+                              );
+                            }}
+                            data={[
+                              { value: "string", label: "String" },
+                              { value: "number", label: "Number" },
+                              { value: "boolean", label: "Boolean" },
+                              { value: "json", label: "JSON / Object" },
+                            ]}
+                            style={{ width: 110 }}
+                          />
+                          {field.type === "boolean" ? (
+                            <Select
+                              size="xs"
+                              value={field.value === "true" ? "true" : "false"}
+                              onChange={(val) =>
+                                handleUpdateField(
+                                  field.id,
+                                  field.key,
+                                  val || "true",
+                                  field.type,
+                                )
+                              }
+                              data={[
+                                { value: "true", label: "true" },
+                                { value: "false", label: "false" },
+                              ]}
+                              style={{ flex: 2 }}
+                            />
+                          ) : (
+                            <TextInput
+                              placeholder={
+                                field.type === "number"
+                                  ? "123"
+                                  : field.type === "json"
+                                    ? '{"sub": 1}'
+                                    : "Value (e.g. test)"
+                              }
+                              size="xs"
+                              value={field.value}
+                              onChange={(e) =>
+                                handleUpdateField(
+                                  field.id,
+                                  field.key,
+                                  e.currentTarget.value,
+                                  field.type,
+                                )
+                              }
+                              style={{ flex: 2 }}
+                              styles={{
+                                input: {
+                                  fontFamily: "var(--font-mono)",
+                                  fontSize: "12px",
+                                },
+                              }}
+                            />
+                          )}
+                          <ActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            onClick={() => handleRemoveField(field.id)}
+                            title="Remove Field"
+                          >
+                            <IconTrash size={14} />
+                          </ActionIcon>
+                        </Group>
+                      ))}
+
+                      <Group justify="space-between" mt={4}>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          leftSection={<IconPlus size={12} />}
+                          onClick={handleAddField}
+                          style={{
+                            backgroundColor: "var(--color-neon-dim)",
+                            color: "var(--color-neon-primary)",
+                            border: "1px solid var(--color-border-glow)",
+                          }}
+                        >
+                          Add Field
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          color="dimmed"
+                          onClick={() => {
+                            setTestBodyFields([
+                              {
+                                id: String(Date.now()),
+                                key: "",
+                                value: "",
+                                type: "string" as const,
+                              },
+                            ]);
+                            setTestRequestBody("{}");
+                          }}
+                        >
+                          Clear Fields
+                        </Button>
+                      </Group>
+                    </Stack>
+                  </Paper>
+                ) : (
+                  <Stack gap={4}>
+                    <Group justify="flex-end" mb={2}>
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        leftSection={<IconSparkles size={12} />}
+                        onClick={handleFormatJson}
+                        style={{ color: "var(--color-text-secondary)" }}
+                      >
+                        Format JSON
+                      </Button>
+                    </Group>
+                    <Textarea
+                      value={testRequestBody}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTestRequestBody(val);
+                        try {
+                          setTestBodyFields(parseJsonToFields(val));
+                        } catch {}
+                      }}
+                      rows={6}
+                      styles={{
+                        input: {
+                          fontFamily: "var(--font-mono)",
+                          fontSize: "12px",
+                          backgroundColor: "var(--color-bg-well)",
+                          borderColor: "var(--color-border)",
+                        },
+                      }}
+                    />
+                  </Stack>
+                )}
+              </Stack>
             )}
 
             <Button
@@ -3464,7 +3882,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
               }}
               styles={{
                 input: {
-                  fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                  fontFamily:
+                    "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
                   fontVariantLigatures: "none",
                   fontFeatureSettings: '"calt" 0, "liga" 0',
                   backgroundColor: "var(--color-bg-well)",
@@ -3603,7 +4022,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                 minHeight: "180px",
                 maxHeight: "340px",
                 overflowY: "auto",
-                fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                fontFamily:
+                  "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
                 fontVariantLigatures: "none",
                 fontFeatureSettings: '"calt" 0, "liga" 0',
                 fontSize: "12px",
@@ -3623,11 +4043,14 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                       style={{
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-all",
-                        color: line.startsWith("[Error]") || line.startsWith("Error:") || line.startsWith("[stderr]")
-                          ? "#f87171"
-                          : line.startsWith("$")
-                            ? "var(--color-neon-primary)"
-                            : "#e2e8f0",
+                        color:
+                          line.startsWith("[Error]") ||
+                          line.startsWith("Error:") ||
+                          line.startsWith("[stderr]")
+                            ? "#f87171"
+                            : line.startsWith("$")
+                              ? "var(--color-neon-primary)"
+                              : "#e2e8f0",
                       }}
                     >
                       {line}
@@ -3700,7 +4123,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
           <Stack gap="md">
             <div>
               <Text size="sm" c="dimmed" style={{ lineHeight: 1.4 }}>
-                Running scheduled background job <b>{selectedCron.name}</b> on-demand with real-time log streaming.
+                Running scheduled background job <b>{selectedCron.name}</b>{" "}
+                on-demand with real-time log streaming.
               </Text>
             </div>
 
@@ -3845,7 +4269,8 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                 minHeight: "200px",
                 maxHeight: "380px",
                 overflowY: "auto",
-                fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                fontFamily:
+                  "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
                 fontVariantLigatures: "none",
                 fontFeatureSettings: '"calt" 0, "liga" 0',
                 fontSize: "12px",

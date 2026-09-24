@@ -349,6 +349,33 @@ await ab.collections.update("products", {
 await ab.collections.delete("products");
 ```
 
+### ⚡ View & Manage Table Indexes
+
+Inspect all live SQLite indexes, create custom composite or single-column indexes, and drop indexes:
+
+```typescript
+// 1. Get all active SQLite indexes on a table
+const indexes = await ab.collections.getIndexes("products");
+console.log("Active table indexes:", indexes);
+// Example item: { name: "idx_products_sku", tableName: "products", unique: true, columns: ["sku"], sql: "..." }
+
+// 2. Create an index using the builder
+const newIndex = await ab.collections.createIndex("products", {
+  name: "idx_products_category_price",
+  columns: ["category", "price"],
+  unique: false,
+});
+console.log("Created index:", newIndex.name, newIndex.sql);
+
+// 3. Create an index using raw SQL statement
+await ab.collections.createIndex("products", {
+  rawSql: "CREATE INDEX IF NOT EXISTS idx_products_tags ON products (tags);",
+});
+
+// 4. Drop an index from a table
+await ab.collections.dropIndex("products", "idx_products_category_price");
+```
+
 ---
 
 ## 6. File Uploads & Media Assets

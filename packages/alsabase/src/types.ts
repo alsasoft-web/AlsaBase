@@ -88,6 +88,7 @@ export interface FieldDef {
   type: "text" | "number" | "bool" | "email" | "url" | "date" | "autodate" | "select" | "json" | "file" | "relation";
   required?: boolean;
   unique?: boolean;
+  indexed?: boolean;
   presentable?: boolean;
   hidden?: boolean;
   helpText?: string;
@@ -107,6 +108,15 @@ export interface FieldDef {
   onCreate?: boolean;
   onUpdate?: boolean;
   options?: Record<string, any>;
+}
+
+export interface TableIndexInfo {
+  name: string;
+  tableName: string;
+  unique: boolean;
+  columns: string[];
+  sql?: string;
+  primaryKey?: boolean;
 }
 
 export interface CollectionRule {

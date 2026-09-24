@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db, hashPassword, verifyPassword } from './db';
-import { getCollection, listCollections, createCollection, updateCollection, deleteCollection, sanitizeIdentifier, FieldDef } from './schema';
+import { getCollection, listCollections, createCollection, updateCollection, deleteCollection, sanitizeIdentifier, FieldDef, getTableIndexes, createTableIndex, dropTableIndex } from './schema';
 import { AuthPayload, requireSuperuser, generateToken, requireAuth } from './auth';
 import { broadcastRecordEvent } from './events';
 import { saveRecordFile, deleteRecordFiles } from './files';
@@ -319,6 +319,42 @@ collectionsRouter.delete('/:name', requireSuperuser, (req: Request, res: Respons
   const deleted = deleteCollection(name);
   if (!deleted) return res.status(404).json({ error: 'Collection not found' });
   res.json({ success: true });
+});
+
+// --- INDEX MANAGEMENT (Superuser Only) ---
+
+// Get all active SQLite indexes for a collection/table
+collectionsRouter.get('/:name/indexes', requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const name = getParam(req.params.name);
+    const indexes = getTableIndexes(name);
+    res.json({ items: indexes, total: indexes.length });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Create an index for a collection/table
+collectionsRouter.post('/:name/indexes', requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const name = getParam(req.params.name);
+    const result = createTableIndex(name, req.body);
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Drop an index from a collection/table
+collectionsRouter.delete('/:name/indexes/:indexName', requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const name = getParam(req.params.name);
+    const indexName = getParam(req.params.indexName);
+    const result = dropTableIndex(name, indexName);
+    res.json({ success: result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // --- RECORD CRUD ---

@@ -4,6 +4,7 @@ import type {
   ListResult,
   ListOptions,
   CommonOptions,
+  TableIndexInfo,
 } from "../types";
 
 export class CollectionService extends BaseService {
@@ -138,5 +139,58 @@ export class CollectionService extends BaseService {
       }
     );
     return true;
+  }
+
+  /**
+   * Returns all active SQLite indexes for a collection/table (Superuser required)
+   */
+  async getIndexes(
+    idOrName: string,
+    options?: CommonOptions
+  ): Promise<TableIndexInfo[]> {
+    const res = await this.send<{ items: TableIndexInfo[]; total: number }>(
+      `/api/collections/${encodeURIComponent(idOrName)}/indexes`,
+      {
+        method: "GET",
+        ...options,
+      }
+    );
+    return res.items || [];
+  }
+
+  /**
+   * Creates a new index for a collection/table (Superuser required)
+   */
+  async createIndex(
+    idOrName: string,
+    data: { name?: string; columns?: string[]; unique?: boolean; rawSql?: string },
+    options?: CommonOptions
+  ): Promise<{ name: string; sql: string }> {
+    return this.send<{ name: string; sql: string }>(
+      `/api/collections/${encodeURIComponent(idOrName)}/indexes`,
+      {
+        method: "POST",
+        body: data,
+        ...options,
+      }
+    );
+  }
+
+  /**
+   * Drops an index from a collection/table (Superuser required)
+   */
+  async dropIndex(
+    idOrName: string,
+    indexName: string,
+    options?: CommonOptions
+  ): Promise<boolean> {
+    const res = await this.send<{ success: boolean }>(
+      `/api/collections/${encodeURIComponent(idOrName)}/indexes/${encodeURIComponent(indexName)}`,
+      {
+        method: "DELETE",
+        ...options,
+      }
+    );
+    return res.success;
   }
 }

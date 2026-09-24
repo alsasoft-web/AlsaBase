@@ -609,7 +609,9 @@ export function resolvePublicPath(relPath: string = ""): string {
   const normalized = path.normalize(cleanPath);
   const fullPath = path.resolve(PUBLIC_DIR, normalized);
   if (!fullPath.startsWith(PUBLIC_DIR)) {
-    throw new Error("Access denied: Invalid file path outside _public directory");
+    throw new Error(
+      "Access denied: Invalid file path outside _public directory",
+    );
   }
   return fullPath;
 }
@@ -726,9 +728,7 @@ export function createPublicFilesApi() {
     return entries
       .filter(
         (e) =>
-          e.name !== ".git" &&
-          e.name !== ".trash" &&
-          e.name !== "node_modules",
+          e.name !== ".git" && e.name !== ".trash" && e.name !== "node_modules",
       )
       .map((e) => ({
         name: e.name,
@@ -816,7 +816,9 @@ export async function executeHookCron(
     });
   };
 
-  const execKey = executionId || `cron_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const execKey =
+    executionId ||
+    `cron_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   activeRunningProcesses.set(execKey, {
     commandName: name,
     cancel: () => {
@@ -1378,13 +1380,23 @@ function isExecutableHook(filename: string): boolean {
   );
 }
 
-function getAllHookFiles(dir: string, baseDir = dir): { fullPath: string; relPath: string; isExecutable: boolean }[] {
-  let results: { fullPath: string; relPath: string; isExecutable: boolean }[] = [];
+function getAllHookFiles(
+  dir: string,
+  baseDir = dir,
+): { fullPath: string; relPath: string; isExecutable: boolean }[] {
+  let results: { fullPath: string; relPath: string; isExecutable: boolean }[] =
+    [];
   if (!fs.existsSync(dir)) return results;
 
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.name === ".git" || entry.name === "node_modules" || entry.name === ".trash" || entry.name.startsWith(".")) continue;
+    if (
+      entry.name === ".git" ||
+      entry.name === "node_modules" ||
+      entry.name === ".trash" ||
+      entry.name.startsWith(".")
+    )
+      continue;
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results = results.concat(getAllHookFiles(fullPath, baseDir));
@@ -1614,84 +1626,6 @@ export async function executeHooksRoute(
   }
 }
 
-// Known flag metadata dictionary for common CLI scripts
-const KNOWN_FLAG_DESCRIPTIONS: Record<
-  string,
-  {
-    description: string;
-    param?: string;
-    type?: "string" | "boolean" | "number";
-  }
-> = {
-  list: {
-    description: "List all available games and maps without downloading",
-    type: "boolean",
-  },
-  game: {
-    description: "Target game slug to download",
-    param: "game_slug",
-    type: "string",
-  },
-  map: {
-    description: "Target map slug within the game",
-    param: "map_slug",
-    type: "string",
-  },
-  all: {
-    description: "Download all available games and maps",
-    type: "boolean",
-  },
-  "min-zoom": {
-    description: "Minimum tile zoom level (e.g. 0)",
-    param: "N",
-    type: "number",
-  },
-  "max-zoom": {
-    description: "Maximum tile zoom level (e.g. 5)",
-    param: "N",
-    type: "number",
-  },
-  concurrency: {
-    description: "Parallel download worker count (default: 64)",
-    param: "N",
-    type: "number",
-  },
-  output: {
-    description: "Custom destination folder path",
-    param: "dir",
-    type: "string",
-  },
-  "skip-tiles": {
-    description:
-      "Download metadata, locations & sprites only without tile images",
-    type: "boolean",
-  },
-  "skip-media": {
-    description: "Skip downloading location screenshots and media attachments",
-    type: "boolean",
-  },
-  update: {
-    description: "Update data and metadata only, skip existing files",
-    type: "boolean",
-  },
-  "update-only": {
-    description: "Update data and metadata only, skip existing files",
-    type: "boolean",
-  },
-  "update-data": {
-    description: "Update data and metadata only, skip existing files",
-    type: "boolean",
-  },
-  help: { description: "Display CLI usage help and options", type: "boolean" },
-  version: { description: "Display script version", type: "boolean" },
-  force: {
-    description: "Force re-download and overwrite existing files",
-    type: "boolean",
-  },
-  verbose: { description: "Enable verbose debug logs", type: "boolean" },
-  quiet: { description: "Suppress console output", type: "boolean" },
-};
-
 // Prefixes to strictly ignore (CSS variables, HTML attributes, UI styles)
 const IGNORED_FLAG_PREFIXES = [
   "bg-",
@@ -1834,18 +1768,13 @@ export function extractCliScriptMeta(
         body.includes("parseFloat(") ||
         body.includes("path.resolve(");
 
-      const known = KNOWN_FLAG_DESCRIPTIONS[flagKey];
-      const paramName = known?.param || (isParam ? "value" : undefined);
-      const paramType =
-        known?.type ||
-        (isParam
-          ? body.includes("parseInt") || body.includes("parseFloat")
-            ? "number"
-            : "string"
-          : "boolean");
-      const desc =
-        known?.description ||
-        (paramName ? `Specify ${paramName}` : `Flag: ${primaryFlag}`);
+      const paramName = isParam ? "value" : undefined;
+      const paramType = isParam
+        ? body.includes("parseInt") || body.includes("parseFloat")
+          ? "number"
+          : "string"
+        : "boolean";
+      const desc = paramName ? `Specify ${paramName}` : `Flag: ${primaryFlag}`;
 
       optionsMap.set(flagKey, {
         name: `${primaryFlag}${paramName ? ` <${paramName}>` : ""}`,
@@ -1870,7 +1799,7 @@ export function extractCliScriptMeta(
     const flagKey = rawFlagName.toLowerCase();
     if (flagKey.replace(/[-_]/g, "").length === 0) continue;
 
-    // Check if the match accidentally captured another flag as a parameter (e.g. [--min-zoom])
+    // Check if the match accidentally captured another flag as a parameter
     let paramName: string | undefined = docMatch[2] || docMatch[3];
     if (
       paramName &&
@@ -1879,12 +1808,9 @@ export function extractCliScriptMeta(
       paramName = undefined;
     }
 
-    const known = KNOWN_FLAG_DESCRIPTIONS[flagKey];
-    const finalParam = paramName || known?.param;
-    const finalType = known?.type || (finalParam ? "string" : "boolean");
-    const desc =
-      known?.description ||
-      (finalParam ? `Specify ${finalParam}` : `Flag: --${docMatch[1]}`);
+    const finalParam = paramName;
+    const finalType = finalParam ? "string" : "boolean";
+    const desc = finalParam ? `Specify ${finalParam}` : `Flag: --${docMatch[1]}`;
 
     if (!optionsMap.has(flagKey)) {
       optionsMap.set(flagKey, {
@@ -1899,7 +1825,6 @@ export function extractCliScriptMeta(
       existing.param = finalParam;
       existing.name = `${existing.flag || `--${flagKey}`} <${finalParam}>`;
       existing.type = finalType as any;
-      if (known?.description) existing.description = known.description;
     }
   }
 
@@ -1926,7 +1851,10 @@ export const activeRunningProcesses = new Map<
   }
 >();
 
-export function cancelRunningCommand(executionId?: string, name?: string): boolean {
+export function cancelRunningCommand(
+  executionId?: string,
+  name?: string,
+): boolean {
   if (executionId && activeRunningProcesses.has(executionId)) {
     const entry = activeRunningProcesses.get(executionId);
     if (entry) {
@@ -1999,7 +1927,9 @@ export async function executeHookCommand(
         env: { ...process.env, FORCE_COLOR: "0" },
       });
 
-      const execKey = executionId || `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const execKey =
+        executionId ||
+        `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       activeRunningProcesses.set(execKey, {
         commandName: name,
         child,

@@ -14,6 +14,8 @@ import {
   Code,
   Paper,
   Drawer,
+  Modal,
+  MultiSelect,
   Select,
   Checkbox,
   NumberInput,
@@ -83,6 +85,7 @@ import {
   CollectionRule,
   FieldDef,
   FieldType,
+  TableIndexInfo,
 } from "../../api/client";
 
 export interface OAuth2ProviderConfig {
@@ -191,6 +194,24 @@ export const CollectionsView: React.FC = () => {
   const [apiPreviewOpen, setApiPreviewOpen] = useState(false);
   const [collectionsOverviewOpen, setCollectionsOverviewOpen] = useState(false);
   const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+
+  // Table Indexes Inspector Modal
+  const [indexesModalOpen, setIndexesModalOpen] = useState(false);
+  const [tableIndexes, setTableIndexes] = useState<TableIndexInfo[]>([]);
+  const [loadingIndexes, setLoadingIndexes] = useState(false);
+  const [showAddIndexForm, setShowAddIndexForm] = useState(false);
+  const [newIndexName, setNewIndexName] = useState("");
+  const [newIndexCols, setNewIndexCols] = useState<string[]>([]);
+  const [newIndexUnique, setNewIndexUnique] = useState(false);
+  const [newIndexRawSql, setNewIndexRawSql] = useState("");
+  const [useRawSql, setUseRawSql] = useState(false);
+
+  // Schema Drawer Index Form State
+  const [schemaIndexCols, setSchemaIndexCols] = useState<string[]>([]);
+  const [schemaIndexUnique, setSchemaIndexUnique] = useState(false);
+  const [schemaIndexName, setSchemaIndexName] = useState("");
+  const [schemaIndexRawSql, setSchemaIndexRawSql] = useState("");
+  const [schemaUseRawSql, setSchemaUseRawSql] = useState(false);
 
   // Record Create/Edit Drawer
   const [recordDrawerOpen, setRecordDrawerOpen] = useState(false);
@@ -633,6 +654,153 @@ export const CollectionsView: React.FC = () => {
     const updated = [...fields];
     updated[idx] = { ...updated[idx], ...patch };
     setFields(updated);
+  };
+
+  const loadTableIndexes = async (tableName: string) => {
+    setLoadingIndexes(true);
+    try {
+      const res = await api.getTableIndexes(tableName);
+      setTableIndexes(res.items || []);
+    } catch (err: any) {
+      notifications.show({
+        title: "Failed to load indexes",
+        message: err.message,
+        color: "red",
+      });
+    } finally {
+      setLoadingIndexes(false);
+    }
+  };
+
+  const handleOpenIndexesModal = (col: CollectionDef) => {
+    loadTableIndexes(col.name);
+    setShowAddIndexForm(false);
+    setNewIndexName("");
+    setNewIndexCols([]);
+    setNewIndexUnique(false);
+    setNewIndexRawSql("");
+    setUseRawSql(false);
+    setIndexesModalOpen(true);
+  };
+
+  const handleCreateLiveIndex = async () => {
+    if (!selectedCollection) return;
+    if (!useRawSql && newIndexCols.length === 0) {
+      notifications.show({
+        title: "Validation Error",
+        message: "Please select at least one column for the index",
+        color: "yellow",
+      });
+      return;
+    }
+    if (useRawSql && !newIndexRawSql.trim()) {
+      notifications.show({
+        title: "Validation Error",
+        message: "Raw SQL query cannot be empty",
+        color: "yellow",
+      });
+      return;
+    }
+
+    try {
+      await api.createTableIndex(selectedCollection.name, {
+        name: newIndexName.trim() || undefined,
+        columns: newIndexCols,
+        unique: newIndexUnique,
+        rawSql: useRawSql ? newIndexRawSql.trim() : undefined,
+      });
+      notifications.show({
+        title: "Index Created",
+        message: "Database index created successfully.",
+        color: "teal",
+      });
+      setShowAddIndexForm(false);
+      setNewIndexName("");
+      setNewIndexCols([]);
+      setNewIndexUnique(false);
+      setNewIndexRawSql("");
+      setUseRawSql(false);
+      loadTableIndexes(selectedCollection.name);
+      loadCollections();
+    } catch (err: any) {
+      notifications.show({
+        title: "Failed to create index",
+        message: err.message,
+        color: "red",
+      });
+    }
+  };
+
+  const handleDropLiveIndex = (indexName: string) => {
+    if (!selectedCollection) return;
+    modals.openConfirmModal({
+      title: `Drop Index "${indexName}"`,
+      centered: true,
+      children: (
+        <Text size="sm">
+          Are you sure you want to drop the index <b>{indexName}</b> from table{" "}
+          <b>{selectedCollection.name}</b>?
+        </Text>
+      ),
+      labels: { confirm: "Drop Index", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      onConfirm: async () => {
+        try {
+          await api.dropTableIndex(selectedCollection.name, indexName);
+          notifications.show({
+            title: "Index Dropped",
+            message: `Index "${indexName}" was dropped successfully.`,
+            color: "teal",
+          });
+          loadTableIndexes(selectedCollection.name);
+          loadCollections();
+        } catch (err: any) {
+          notifications.show({
+            title: "Failed to drop index",
+            message: err.message,
+            color: "red",
+          });
+        }
+      },
+    });
+  };
+
+  const handleAddSchemaIndex = () => {
+    let sqlToAdd = "";
+    if (schemaUseRawSql) {
+      if (!schemaIndexRawSql.trim()) {
+        notifications.show({
+          title: "Validation Error",
+          message: "Raw SQL query cannot be empty",
+          color: "yellow",
+        });
+        return;
+      }
+      sqlToAdd = schemaIndexRawSql.trim();
+    } else {
+      if (schemaIndexCols.length === 0) {
+        notifications.show({
+          title: "Validation Error",
+          message: "Please select at least one column for the index",
+          color: "yellow",
+        });
+        return;
+      }
+      const targetTable = collectionFormName.trim() || "collection";
+      const cols = schemaIndexCols.map((c) => `"${c}"`).join(", ");
+      const colsClean = schemaIndexCols.join("_");
+      const idxName =
+        schemaIndexName.trim() || `idx_${targetTable}_${colsClean}`;
+      const uniquePart = schemaIndexUnique ? "UNIQUE " : "";
+      sqlToAdd = `CREATE ${uniquePart}INDEX IF NOT EXISTS "${idxName}" ON "${targetTable}" (${cols});`;
+    }
+
+    setCollectionIndexes((prev) => [...prev, sqlToAdd]);
+    setSchemaIndexCols([]);
+    setSchemaIndexUnique(false);
+    setSchemaIndexName("");
+    setSchemaIndexRawSql("");
+    setSchemaUseRawSql(false);
   };
 
   const filteredCollections = collections.filter((c) =>
@@ -1218,6 +1386,22 @@ export const CollectionsView: React.FC = () => {
                     }}
                   >
                     API Preview
+                  </Button>
+
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    leftSection={<IconDatabase size={14} />}
+                    onClick={() => handleOpenIndexesModal(selectedCollection)}
+                    style={{
+                      backgroundColor: "var(--color-bg-card)",
+                      color: "var(--color-text-dimmed)",
+                      border: "1px solid var(--color-border)",
+                      fontSize: "12px",
+                      height: 30,
+                    }}
+                  >
+                    Indexes
                   </Button>
 
                   <Button
@@ -2248,6 +2432,309 @@ export const CollectionsView: React.FC = () => {
         collection={selectedCollection}
       />
 
+      {/* Table Indexes Inspector Modal */}
+      <Modal
+        opened={indexesModalOpen}
+        onClose={() => setIndexesModalOpen(false)}
+        size="lg"
+        title={
+          <Group gap={8}>
+            <IconDatabase size={18} color="var(--color-neon-primary)" />
+            <Text fw={700} size="md">
+              Table Indexes: {selectedCollection?.name}
+            </Text>
+            <Badge size="xs" variant="outline" color="gray">
+              SQLite
+            </Badge>
+          </Group>
+        }
+        styles={{
+          header: {
+            backgroundColor: "var(--color-bg-surface)",
+            borderBottom: "1px solid var(--color-border)",
+            padding: "16px 20px",
+          },
+          body: {
+            backgroundColor: "var(--color-bg-base)",
+            padding: 20,
+          },
+        }}
+      >
+        <Stack gap="md">
+          <Group justify="space-between" align="center">
+            <Text size="xs" c="dimmed">
+              View and manage active SQLite indexes on the{" "}
+              <b>{selectedCollection?.name}</b> table.
+            </Text>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="subtle"
+                leftSection={<IconRefresh size={14} />}
+                loading={loadingIndexes}
+                onClick={() =>
+                  selectedCollection &&
+                  loadTableIndexes(selectedCollection.name)
+                }
+                style={{
+                  color: "var(--color-text-dimmed)",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                Refresh
+              </Button>
+              <Button
+                size="xs"
+                leftSection={<IconPlus size={14} />}
+                onClick={() => setShowAddIndexForm(!showAddIndexForm)}
+                style={{
+                  backgroundColor: "var(--color-neon-primary)",
+                  color: "var(--color-neon-text)",
+                  fontWeight: 600,
+                }}
+              >
+                {showAddIndexForm ? "Hide Form" : "Create Index"}
+              </Button>
+            </Group>
+          </Group>
+
+          {/* Add Index Collapsible Form */}
+          <Collapse expanded={showAddIndexForm}>
+            <Paper
+              p="md"
+              withBorder
+              mb="sm"
+              style={{
+                backgroundColor: "var(--color-bg-card)",
+                borderColor: "var(--color-border-glow)",
+                borderRadius: 8,
+              }}
+            >
+              <Stack gap="sm">
+                <Group justify="space-between">
+                  <Text size="xs" fw={700} c="var(--color-neon-primary)">
+                    Create New Index on {selectedCollection?.name}
+                  </Text>
+                  <Switch
+                    size="xs"
+                    label="Raw SQL"
+                    checked={useRawSql}
+                    onChange={(e) => setUseRawSql(e.currentTarget.checked)}
+                  />
+                </Group>
+
+                {useRawSql ? (
+                  <TextInput
+                    label="Raw SQL Index Statement"
+                    placeholder={`CREATE INDEX idx_${selectedCollection?.name}_custom ON ${selectedCollection?.name} (col1);`}
+                    size="xs"
+                    value={newIndexRawSql}
+                    onChange={(e) => setNewIndexRawSql(e.target.value)}
+                    styles={{
+                      input: {
+                        backgroundColor: "var(--color-bg-well)",
+                        borderColor: "var(--color-border)",
+                        fontFamily: "var(--font-mono)",
+                      },
+                    }}
+                  />
+                ) : (
+                  <>
+                    <MultiSelect
+                      label="Select Column(s)"
+                      placeholder="Select columns to index..."
+                      size="xs"
+                      data={
+                        selectedCollection
+                          ? selectedCollection.fields.map((f) => f.name)
+                          : []
+                      }
+                      value={newIndexCols}
+                      onChange={setNewIndexCols}
+                      searchable
+                      clearable
+                      styles={{
+                        input: {
+                          backgroundColor: "var(--color-bg-well)",
+                          borderColor: "var(--color-border)",
+                        },
+                      }}
+                    />
+                    <Grid>
+                      <Grid.Col span={8}>
+                        <TextInput
+                          label="Index Name (optional)"
+                          placeholder={`idx_${selectedCollection?.name}_${newIndexCols.join("_") || "cols"}`}
+                          size="xs"
+                          value={newIndexName}
+                          onChange={(e) => setNewIndexName(e.target.value)}
+                          styles={{
+                            input: {
+                              backgroundColor: "var(--color-bg-well)",
+                              borderColor: "var(--color-border)",
+                              fontFamily: "var(--font-mono)",
+                            },
+                          }}
+                        />
+                      </Grid.Col>
+                      <Grid.Col
+                        span={4}
+                        style={{ display: "flex", alignItems: "flex-end" }}
+                      >
+                        <Checkbox
+                          size="xs"
+                          label="Unique Index"
+                          checked={newIndexUnique}
+                          onChange={(e) =>
+                            setNewIndexUnique(e.currentTarget.checked)
+                          }
+                          mb={8}
+                        />
+                      </Grid.Col>
+                    </Grid>
+                  </>
+                )}
+
+                <Button
+                  size="xs"
+                  leftSection={<IconCheck size={14} />}
+                  onClick={handleCreateLiveIndex}
+                  style={{
+                    backgroundColor: "var(--color-neon-primary)",
+                    color: "var(--color-neon-text)",
+                    fontWeight: 700,
+                  }}
+                >
+                  Create Index
+                </Button>
+              </Stack>
+            </Paper>
+          </Collapse>
+
+          {/* Active Indexes List */}
+          {tableIndexes.length > 0 ? (
+            <Stack gap="xs">
+              {tableIndexes.map((idxInfo, i) => (
+                <Paper
+                  key={idxInfo.name || i}
+                  p="sm"
+                  withBorder
+                  style={{
+                    backgroundColor: "var(--color-bg-card)",
+                    borderColor: "var(--color-border)",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Group
+                    justify="space-between"
+                    align="flex-start"
+                    wrap="nowrap"
+                  >
+                    <Stack gap={6} style={{ flex: 1, minWidth: 0 }}>
+                      <Group gap={8} wrap="nowrap">
+                        <IconDatabase
+                          size={15}
+                          color="var(--color-neon-primary)"
+                        />
+                        <Text
+                          size="xs"
+                          fw={700}
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            color: "var(--color-text-primary)",
+                          }}
+                        >
+                          {idxInfo.name}
+                        </Text>
+                        {idxInfo.primaryKey && (
+                          <Badge size="xs" color="yellow" variant="light">
+                            PRIMARY KEY
+                          </Badge>
+                        )}
+                        {idxInfo.unique && !idxInfo.primaryKey && (
+                          <Badge size="xs" color="blue" variant="light">
+                            UNIQUE
+                          </Badge>
+                        )}
+                        {!idxInfo.unique && !idxInfo.primaryKey && (
+                          <Badge size="xs" color="gray" variant="light">
+                            INDEX
+                          </Badge>
+                        )}
+                      </Group>
+
+                      {idxInfo.columns && idxInfo.columns.length > 0 && (
+                        <Group gap={4}>
+                          <Text size="xs" c="dimmed">
+                            Columns:
+                          </Text>
+                          {idxInfo.columns.map((colName) => (
+                            <Badge
+                              key={colName}
+                              size="xs"
+                              variant="outline"
+                              style={{
+                                borderColor: "var(--color-border-glow)",
+                                color: "var(--color-neon-primary)",
+                                fontFamily: "var(--font-mono)",
+                              }}
+                            >
+                              {colName}
+                            </Badge>
+                          ))}
+                        </Group>
+                      )}
+
+                      {idxInfo.sql && (
+                        <Code
+                          block
+                          style={{
+                            fontSize: "11px",
+                            backgroundColor: "var(--color-bg-well)",
+                            color: "var(--color-text-primary)",
+                            fontFamily: "var(--font-mono)",
+                            wordBreak: "break-all",
+                          }}
+                        >
+                          {idxInfo.sql}
+                        </Code>
+                      )}
+                    </Stack>
+
+                    {!idxInfo.primaryKey && (
+                      <Tooltip label="Drop Index" withArrow>
+                        <ActionIcon
+                          size="sm"
+                          color="red"
+                          variant="subtle"
+                          onClick={() => handleDropLiveIndex(idxInfo.name)}
+                        >
+                          <IconTrash size={15} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                  </Group>
+                </Paper>
+              ))}
+            </Stack>
+          ) : (
+            <Paper
+              p="xl"
+              withBorder
+              style={{
+                backgroundColor: "var(--color-bg-card)",
+                borderColor: "var(--color-border)",
+                textAlign: "center",
+              }}
+            >
+              <Text size="xs" c="dimmed">
+                No active indexes found on this table.
+              </Text>
+            </Paper>
+          )}
+        </Stack>
+      </Modal>
+
       {/* DRAWER 1: Schema Editor (AlsaBase Modern Schema Drawer) */}
       <Drawer
         opened={schemaDrawerOpen}
@@ -2343,6 +2830,12 @@ export const CollectionsView: React.FC = () => {
             <Tabs.List style={{ borderColor: "var(--color-border)" }} mb="md">
               <Tabs.Tab value="fields" leftSection={<IconTable size={15} />}>
                 Fields & Schema
+              </Tabs.Tab>
+              <Tabs.Tab
+                value="indexes"
+                leftSection={<IconDatabase size={15} />}
+              >
+                Indexes ({collectionIndexes.length})
               </Tabs.Tab>
               <Tabs.Tab value="rules" leftSection={<IconShield size={15} />}>
                 API Access Rules
@@ -3061,6 +3554,17 @@ export const CollectionsView: React.FC = () => {
                                       />
                                       <Checkbox
                                         size="xs"
+                                        label="Indexed"
+                                        checked={field.indexed || false}
+                                        onChange={(e) =>
+                                          updateField(idx, {
+                                            indexed:
+                                              e.currentTarget.checked,
+                                          })
+                                        }
+                                      />
+                                      <Checkbox
+                                        size="xs"
                                         label="Presentable"
                                         checked={field.presentable || false}
                                         onChange={(e) =>
@@ -3172,6 +3676,17 @@ export const CollectionsView: React.FC = () => {
                                       />
                                       <Checkbox
                                         size="xs"
+                                        label="Indexed"
+                                        checked={field.indexed || false}
+                                        onChange={(e) =>
+                                          updateField(idx, {
+                                            indexed:
+                                              e.currentTarget.checked,
+                                          })
+                                        }
+                                      />
+                                      <Checkbox
+                                        size="xs"
                                         label="Presentable"
                                         checked={field.presentable || false}
                                         onChange={(e) =>
@@ -3225,6 +3740,189 @@ export const CollectionsView: React.FC = () => {
                 >
                   New Field
                 </Button>
+              </Stack>
+            </Tabs.Panel>
+
+            {/* TAB: INDEXES */}
+            <Tabs.Panel value="indexes">
+              <Stack gap="md">
+                <Text size="xs" c="dimmed">
+                  Configure database indexes to optimize query performance and enforce unique constraints on table columns.
+                </Text>
+
+                {/* List of configured indexes */}
+                {collectionIndexes.length > 0 ? (
+                  <Stack gap="xs">
+                    {collectionIndexes.map((idxSql, i) => (
+                      <Paper
+                        key={i}
+                        p="sm"
+                        withBorder
+                        style={{
+                          backgroundColor: "var(--color-bg-card)",
+                          borderColor: "var(--color-border)",
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Group justify="space-between" align="center" wrap="nowrap">
+                          <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+                            <Group gap={6}>
+                              <IconDatabase size={14} color="var(--color-neon-primary)" />
+                              <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
+                                Index #{i + 1}
+                              </Text>
+                              {idxSql.toUpperCase().includes("UNIQUE") && (
+                                <Badge size="xs" variant="filled" color="blue">
+                                  UNIQUE
+                                </Badge>
+                              )}
+                            </Group>
+                            <Code
+                              block
+                              style={{
+                                fontSize: "11px",
+                                backgroundColor: "var(--color-bg-well)",
+                                color: "var(--color-text-primary)",
+                                fontFamily: "var(--font-mono)",
+                                wordBreak: "break-all",
+                              }}
+                            >
+                              {idxSql}
+                            </Code>
+                          </Stack>
+                          <ActionIcon
+                            size="sm"
+                            color="red"
+                            variant="subtle"
+                            onClick={() =>
+                              setCollectionIndexes(
+                                collectionIndexes.filter((_, idxIdx) => idxIdx !== i)
+                              )
+                            }
+                          >
+                            <IconTrash size={14} />
+                          </ActionIcon>
+                        </Group>
+                      </Paper>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Paper
+                    p="md"
+                    withBorder
+                    style={{
+                      backgroundColor: "var(--color-bg-card)",
+                      borderColor: "var(--color-border)",
+                      textAlign: "center",
+                    }}
+                  >
+                    <Text size="xs" c="dimmed">
+                      No custom composite indexes configured yet. You can also mark individual fields as &quot;Indexed&quot; or &quot;Unique&quot; in the Fields tab.
+                    </Text>
+                  </Paper>
+                )}
+
+                {/* Add Index Builder Form */}
+                <Paper
+                  p="md"
+                  withBorder
+                  style={{
+                    backgroundColor: "var(--color-bg-card)",
+                    borderColor: "var(--color-border-glow)",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Stack gap="sm">
+                    <Group justify="space-between">
+                      <Text size="xs" fw={700} c="var(--color-neon-primary)">
+                        + Add Index to Table
+                      </Text>
+                      <Switch
+                        size="xs"
+                        label="Raw SQL"
+                        checked={schemaUseRawSql}
+                        onChange={(e) => setSchemaUseRawSql(e.currentTarget.checked)}
+                      />
+                    </Group>
+
+                    {schemaUseRawSql ? (
+                      <TextInput
+                        label="Raw SQL Index Statement"
+                        placeholder="e.g. CREATE UNIQUE INDEX idx_col ON tbl (col1, col2);"
+                        size="xs"
+                        value={schemaIndexRawSql}
+                        onChange={(e) => setSchemaIndexRawSql(e.target.value)}
+                        styles={{
+                          input: {
+                            backgroundColor: "var(--color-bg-well)",
+                            borderColor: "var(--color-border)",
+                            fontFamily: "var(--font-mono)",
+                          },
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <MultiSelect
+                          label="Columns to Index"
+                          placeholder="Select columns..."
+                          size="xs"
+                          data={fields.map((f) => f.name).filter(Boolean)}
+                          value={schemaIndexCols}
+                          onChange={setSchemaIndexCols}
+                          searchable
+                          clearable
+                          styles={{
+                            input: {
+                              backgroundColor: "var(--color-bg-well)",
+                              borderColor: "var(--color-border)",
+                            },
+                          }}
+                        />
+                        <Grid>
+                          <Grid.Col span={8}>
+                            <TextInput
+                              label="Index Name (optional)"
+                              placeholder={`e.g. idx_${collectionFormName || "table"}_${schemaIndexCols.join("_") || "cols"}`}
+                              size="xs"
+                              value={schemaIndexName}
+                              onChange={(e) => setSchemaIndexName(e.target.value)}
+                              styles={{
+                                input: {
+                                  backgroundColor: "var(--color-bg-well)",
+                                  borderColor: "var(--color-border)",
+                                  fontFamily: "var(--font-mono)",
+                                },
+                              }}
+                            />
+                          </Grid.Col>
+                          <Grid.Col span={4} style={{ display: "flex", alignItems: "flex-end" }}>
+                            <Checkbox
+                              size="xs"
+                              label="Unique Index"
+                              checked={schemaIndexUnique}
+                              onChange={(e) => setSchemaIndexUnique(e.currentTarget.checked)}
+                              mb={8}
+                            />
+                          </Grid.Col>
+                        </Grid>
+                      </>
+                    )}
+
+                    <Button
+                      size="xs"
+                      leftSection={<IconPlus size={14} />}
+                      onClick={handleAddSchemaIndex}
+                      style={{
+                        backgroundColor: "var(--color-neon-dim)",
+                        color: "var(--color-neon-primary)",
+                        border: "1px solid var(--color-border-glow)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Add Index
+                    </Button>
+                  </Stack>
+                </Paper>
               </Stack>
             </Tabs.Panel>
 

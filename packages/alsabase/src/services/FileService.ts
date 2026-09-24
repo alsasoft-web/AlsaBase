@@ -10,15 +10,17 @@ import type {
 export class FileService extends BaseService {
   /**
    * Generates a URL for accessing an uploaded record file asset
-   * 
+   *
    * @param record Record object or record ID string
    * @param filename Filename of the uploaded asset
    * @param queryParams Optional query parameters (e.g. thumb, download)
    */
   getUrl(
-    record: { id?: string; collectionName?: string; collectionId?: string } | string,
+    record:
+      | { id?: string; collectionName?: string; collectionId?: string }
+      | string,
     filename: string,
-    queryParams?: Record<string, any>
+    queryParams?: Record<string, any>,
   ): string {
     if (!filename) return "";
 
@@ -45,8 +47,8 @@ export class FileService extends BaseService {
 
   /**
    * Generates a URL for a public website static asset hosted in _public
-   * 
-   * @param relPath Relative path inside _public (e.g. 'images/banner.png' or 'maps/mafia/lost-heaven/')
+   *
+   * @param relPath Relative path inside _public (e.g. 'images/banner.png')
    */
   getPublicUrl(relPath: string): string {
     const clean = relPath.replace(/^[\/\\]+/, "");
@@ -56,7 +58,9 @@ export class FileService extends BaseService {
   /**
    * Lists all files in the _public directory
    */
-  async listPublicFiles(options?: CommonOptions): Promise<{ items: any[]; total: number; publicDir: string }> {
+  async listPublicFiles(
+    options?: CommonOptions,
+  ): Promise<{ items: any[]; total: number; publicDir: string }> {
     return this.send("/api/static-files", {
       method: "GET",
       ...options,
@@ -66,21 +70,33 @@ export class FileService extends BaseService {
   /**
    * Gets a folder tree for the _public directory
    */
-  async getPublicTree(dir = "", options?: CommonOptions): Promise<TreeResponse> {
-    return this.send<TreeResponse>(`/api/static-files/tree?dir=${encodeURIComponent(dir)}`, {
-      method: "GET",
-      ...options,
-    });
+  async getPublicTree(
+    dir = "",
+    options?: CommonOptions,
+  ): Promise<TreeResponse> {
+    return this.send<TreeResponse>(
+      `/api/static-files/tree?dir=${encodeURIComponent(dir)}`,
+      {
+        method: "GET",
+        ...options,
+      },
+    );
   }
 
   /**
    * Reads a file's content from the _public directory
    */
-  async readPublicFile(path: string, options?: CommonOptions): Promise<FileDetailResponse> {
-    return this.send<FileDetailResponse>(`/api/static-files/file?path=${encodeURIComponent(path)}`, {
-      method: "GET",
-      ...options,
-    });
+  async readPublicFile(
+    path: string,
+    options?: CommonOptions,
+  ): Promise<FileDetailResponse> {
+    return this.send<FileDetailResponse>(
+      `/api/static-files/file?path=${encodeURIComponent(path)}`,
+      {
+        method: "GET",
+        ...options,
+      },
+    );
   }
 
   /**
@@ -90,7 +106,7 @@ export class FileService extends BaseService {
     name: string,
     content: string,
     isBase64 = false,
-    options?: CommonOptions
+    options?: CommonOptions,
   ): Promise<{ name: string; saved: boolean; path: string }> {
     return this.send("/api/static-files/file", {
       method: "POST",
@@ -104,7 +120,7 @@ export class FileService extends BaseService {
    */
   async uploadPublicBatch(
     files: BatchUploadFileItem[],
-    options?: CommonOptions
+    options?: CommonOptions,
   ): Promise<BatchUploadResponse> {
     return this.send<BatchUploadResponse>("/api/static-files/upload-batch", {
       method: "POST",
@@ -116,17 +132,26 @@ export class FileService extends BaseService {
   /**
    * Deletes a file in the _public directory (Superuser required)
    */
-  async deletePublicFile(path: string, options?: CommonOptions): Promise<{ success: boolean; message: string }> {
-    return this.send(`/api/static-files/file?path=${encodeURIComponent(path)}`, {
-      method: "DELETE",
-      ...options,
-    });
+  async deletePublicFile(
+    path: string,
+    options?: CommonOptions,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.send(
+      `/api/static-files/file?path=${encodeURIComponent(path)}`,
+      {
+        method: "DELETE",
+        ...options,
+      },
+    );
   }
 
   /**
    * Creates a folder inside the _public directory (Superuser required)
    */
-  async createPublicFolder(path: string, options?: CommonOptions): Promise<{ success: boolean; path: string }> {
+  async createPublicFolder(
+    path: string,
+    options?: CommonOptions,
+  ): Promise<{ success: boolean; path: string }> {
     return this.send("/api/static-files/folder", {
       method: "POST",
       body: { path },
@@ -137,11 +162,16 @@ export class FileService extends BaseService {
   /**
    * Deletes a folder and all its contents inside the _public directory (Superuser required)
    */
-  async deletePublicFolder(path: string, options?: CommonOptions): Promise<{ success: boolean; message: string }> {
-    return this.send(`/api/static-files/folder?path=${encodeURIComponent(path)}`, {
-      method: "DELETE",
-      ...options,
-    });
+  async deletePublicFolder(
+    path: string,
+    options?: CommonOptions,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.send(
+      `/api/static-files/folder?path=${encodeURIComponent(path)}`,
+      {
+        method: "DELETE",
+        ...options,
+      },
+    );
   }
 }
-

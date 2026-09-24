@@ -246,6 +246,70 @@ Drops a collection and deletes its associated database table.
 
 Truncates all record data in a table while keeping the schema intact.
 
+### `GET /api/collections/:name/indexes`
+
+Fetches all active SQLite indexes on the table, including auto-primary-key indexes, unique constraints, and custom indexes.
+
+- **Response**: `200 OK`
+  ```json
+  {
+    "items": [
+      {
+        "name": "sqlite_autoindex_posts_1",
+        "tableName": "posts",
+        "unique": true,
+        "columns": ["id"],
+        "primaryKey": true
+      },
+      {
+        "name": "idx_posts_slug",
+        "tableName": "posts",
+        "unique": true,
+        "columns": ["slug"],
+        "sql": "CREATE UNIQUE INDEX idx_posts_slug ON posts (slug)"
+      }
+    ],
+    "total": 2
+  }
+  ```
+
+### `POST /api/collections/:name/indexes`
+
+Creates a new index on the specified table (with column builder or raw SQL).
+
+- **Body (Builder Mode)**:
+  ```json
+  {
+    "name": "idx_posts_created_at",
+    "columns": ["created_at"],
+    "unique": false
+  }
+  ```
+- **Body (Raw SQL Mode)**:
+  ```json
+  {
+    "rawSql": "CREATE INDEX idx_posts_tag ON posts (tags);"
+  }
+  ```
+- **Response**: `201 Created`
+  ```json
+  {
+    "name": "idx_posts_created_at",
+    "sql": "CREATE INDEX IF NOT EXISTS \"idx_posts_created_at\" ON \"posts\" (\"created_at\");"
+  }
+  ```
+
+### `DELETE /api/collections/:name/indexes/:indexName`
+
+Drops an index from the table.
+
+- **Response**: `200 OK`
+  ```json
+  {
+    "success": true
+  }
+  ```
+
 ---
 
 ## 4. Record CRUD Operations

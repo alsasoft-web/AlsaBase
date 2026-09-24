@@ -19,6 +19,7 @@ export interface FieldDef {
   type: FieldType;
   required?: boolean;
   unique?: boolean;
+  indexed?: boolean;
   presentable?: boolean;
   hidden?: boolean;
   helpText?: string;
@@ -37,6 +38,15 @@ export interface FieldDef {
   relationCollection?: string;
   onCreate?: boolean;
   onUpdate?: boolean;
+}
+
+export interface TableIndexInfo {
+  name: string;
+  tableName: string;
+  unique: boolean;
+  columns: string[];
+  sql?: string;
+  primaryKey?: boolean;
 }
 
 export interface CollectionRule {
@@ -146,6 +156,120 @@ export function getCollection(nameOrId: string): CollectionDef | null {
   };
 }
 
+export function getTableIndexes(tableName: string): TableIndexInfo[] {
+  const safeName = sanitizeIdentifier(tableName);
+  try {
+    const list = db.prepare(`PRAGMA index_list("${safeName}")`).all() as Array<{
+      seq: number;
+      name: string;
+      unique: number;
+      origin: string;
+      partial: number;
+    }>;
+
+    return list.map((item) => {
+      const infoRows = db.prepare(`PRAGMA index_info("${item.name}")`).all() as Array<{
+        seqno: number;
+        cid: number;
+        name: string;
+      }>;
+      const columns = infoRows.map((r) => r.name).filter(Boolean);
+      const masterRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`).get(item.name) as { sql: string } | undefined;
+
+      return {
+        name: item.name,
+        tableName: safeName,
+        unique: Boolean(item.unique),
+        columns,
+        sql: masterRow?.sql || undefined,
+        primaryKey: item.origin === 'pk' || item.name.startsWith('sqlite_autoindex_')
+      };
+    });
+  } catch (err) {
+    console.error(`[Schema] Error fetching indexes for table ${tableName}:`, err);
+    return [];
+  }
+}
+
+export function normalizeCreateIndexSql(sql: string): string {
+  let s = sql.trim();
+  // Ensure IF NOT EXISTS is inserted if not present
+  if (/^CREATE\s+UNIQUE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)/i.test(s)) {
+    s = s.replace(/^CREATE\s+UNIQUE\s+INDEX\s+/i, 'CREATE UNIQUE INDEX IF NOT EXISTS ');
+  } else if (/^CREATE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)/i.test(s)) {
+    s = s.replace(/^CREATE\s+INDEX\s+/i, 'CREATE INDEX IF NOT EXISTS ');
+  }
+  return s;
+}
+
+export function createTableIndex(
+  tableName: string,
+  indexDef: { name?: string; columns?: string[]; unique?: boolean; rawSql?: string }
+): { name: string; sql: string } {
+  const safeTable = sanitizeIdentifier(tableName);
+  let sql = '';
+  let finalIndexName = '';
+
+  if (indexDef.rawSql && indexDef.rawSql.trim()) {
+    sql = normalizeCreateIndexSql(indexDef.rawSql.trim());
+    if (!sql.endsWith(';')) sql += ';';
+    const match = sql.match(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?([a-zA-Z0-9_]+)["`]?/i);
+    finalIndexName = match ? match[1] : `idx_${safeTable}_custom_${Date.now()}`;
+  } else {
+    if (!indexDef.columns || indexDef.columns.length === 0) {
+      throw new Error('At least one column is required to create an index.');
+    }
+    const cols = indexDef.columns.map((c) => `"${sanitizeIdentifier(c)}"`).join(', ');
+    const colsClean = indexDef.columns.map((c) => sanitizeIdentifier(c)).join('_');
+    finalIndexName = indexDef.name ? sanitizeIdentifier(indexDef.name) : `idx_${safeTable}_${colsClean}`;
+    const uniqueClause = indexDef.unique ? 'UNIQUE ' : '';
+    sql = `CREATE ${uniqueClause}INDEX IF NOT EXISTS "${finalIndexName}" ON "${safeTable}" (${cols});`;
+  }
+
+  try {
+    db.exec(sql);
+  } catch (err: any) {
+    if (!err?.message?.includes('already exists')) {
+      throw err;
+    }
+  }
+
+  // Update collection rules_json indexes if it's a collection
+  const collection = getCollection(safeTable);
+  if (collection) {
+    const existingIndexes = collection.indexes || [];
+    if (!existingIndexes.includes(sql)) {
+      updateCollection(collection.id, {
+        indexes: [...existingIndexes, sql]
+      });
+    }
+  }
+
+  return { name: finalIndexName, sql };
+}
+
+export function dropTableIndex(tableName: string, indexName: string): boolean {
+  const safeTable = sanitizeIdentifier(tableName);
+  const safeIndex = sanitizeIdentifier(indexName);
+
+  db.exec(`DROP INDEX IF EXISTS "${safeIndex}";`);
+
+  // Update collection rules_json indexes if present
+  const collection = getCollection(safeTable);
+  if (collection && collection.indexes) {
+    const newIndexes = collection.indexes.filter((idxStr) => {
+      return !idxStr.includes(`"${safeIndex}"`) && !idxStr.includes(` ${safeIndex} `) && !idxStr.includes(` ${safeIndex}(`) && !idxStr.includes(` ${safeIndex}\n`);
+    });
+    if (newIndexes.length !== collection.indexes.length) {
+      updateCollection(collection.id, {
+        indexes: newIndexes
+      });
+    }
+  }
+
+  return true;
+}
+
 export function createCollection(payload: {
   name: string;
   type?: 'base' | 'auth' | 'view';
@@ -188,14 +312,34 @@ export function createCollection(payload: {
 
   db.exec(createTableSql);
 
-  // Ensure unique indexes for fields marked unique
+  // Ensure unique indexes for fields marked unique or indexed
   for (const field of fields) {
+    const colName = sanitizeIdentifier(field.name.trim().toLowerCase());
     if (field.unique) {
-      const colName = sanitizeIdentifier(field.name.trim().toLowerCase());
       try {
         db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "idx_${name}_${colName}" ON "${name}" ("${colName}");`);
       } catch (err) {
         console.warn(`[Schema] Warning creating unique index for ${name}.${colName}:`, err);
+      }
+    } else if (field.indexed) {
+      try {
+        db.exec(`CREATE INDEX IF NOT EXISTS "idx_${name}_${colName}" ON "${name}" ("${colName}");`);
+      } catch (err) {
+        console.warn(`[Schema] Warning creating index for ${name}.${colName}:`, err);
+      }
+    }
+  }
+
+  // Execute custom indexes defined in payload.indexes
+  for (const idxSql of indexes) {
+    if (idxSql && idxSql.trim()) {
+      try {
+        const safeSql = normalizeCreateIndexSql(idxSql);
+        db.exec(safeSql);
+      } catch (err: any) {
+        if (!err?.message?.includes('already exists')) {
+          console.warn(`[Schema] Warning executing custom index on ${name}:`, err?.message || err);
+        }
       }
     }
   }
@@ -317,17 +461,41 @@ export function updateCollection(
       }
     }
 
-    // Sync unique index for the field
+    // Sync unique / normal index for the field
     if (field.unique) {
       try {
         db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS "idx_${finalName}_${colName}" ON "${finalName}" ("${colName}");`);
       } catch (err) {
         console.warn(`[Schema] Warning creating unique index for ${finalName}.${colName}:`, err);
       }
-    } else if (current.fields.some((f) => f.name.toLowerCase() === colName && f.unique)) {
+    } else if (field.indexed) {
       try {
-        db.exec(`DROP INDEX IF EXISTS "idx_${finalName}_${colName}";`);
-      } catch {}
+        db.exec(`CREATE INDEX IF NOT EXISTS "idx_${finalName}_${colName}" ON "${finalName}" ("${colName}");`);
+      } catch (err) {
+        console.warn(`[Schema] Warning creating index for ${finalName}.${colName}:`, err);
+      }
+    } else {
+      if (current.fields.some((f) => f.name.toLowerCase() === colName && (f.unique || f.indexed))) {
+        try {
+          db.exec(`DROP INDEX IF EXISTS "idx_${finalName}_${colName}";`);
+        } catch {}
+      }
+    }
+  }
+
+  // If new custom indexes provided, execute them
+  if (payload.indexes) {
+    for (const idxSql of payload.indexes) {
+      if (idxSql && idxSql.trim()) {
+        try {
+          const safeSql = normalizeCreateIndexSql(idxSql);
+          db.exec(safeSql);
+        } catch (err: any) {
+          if (!err?.message?.includes('already exists')) {
+            console.warn(`[Schema] Warning executing custom index on ${finalName}:`, err?.message || err);
+          }
+        }
+      }
     }
   }
 

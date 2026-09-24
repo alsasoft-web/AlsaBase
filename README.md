@@ -21,6 +21,7 @@ AlsaBase is a self-hosted backend engine built with Node.js, Express, and embedd
 ## Quick Start
 
 ### 1. Prerequisites
+
 - Node.js 18.0.0 or higher (Node.js 20+ recommended)
 - npm 9+
 
@@ -43,6 +44,7 @@ cp .env.example .env
 ```
 
 Adjust the parameters in `.env` if needed:
+
 - `PORT`: HTTP port for the backend and dashboard (Default: `8090`).
 - `JWT_SECRET`: Secret key used for signing authentication tokens.
 
@@ -119,6 +121,7 @@ The administrative interface is served at `/_/`:
 AlsaBase automatically watches and executes files inside the `_hooks/` directory.
 
 ### Custom API Routes
+
 Create a file like `_hooks/routes.ts`:
 
 ```typescript
@@ -128,22 +131,30 @@ routerAdd("GET", "/api/v1/hello", (c) => {
 ```
 
 ### Scheduled Cron Tasks
+
 Create a file like `_hooks/cron.ts`:
 
 ```typescript
 cronAdd("daily_cleanup", "0 0 * * *", (c) => {
-  c.db.prepare("DELETE FROM _logs WHERE timestamp < datetime('now', '-30 days')").run();
+  c.db
+    .prepare("DELETE FROM _logs WHERE timestamp < datetime('now', '-30 days')")
+    .run();
   console.log("Daily cleanup executed.");
 });
 ```
 
 ### Custom CLI Commands
+
 Create a file like `_hooks/commands.ts`:
 
 ```typescript
-commandAdd("sync_feed", { description: "Fetch external data feed" }, async (c) => {
-  console.log("Starting feed synchronization...");
-});
+commandAdd(
+  "sync_feed",
+  { description: "Fetch external data feed" },
+  async (c) => {
+    console.log("Starting feed synchronization...");
+  },
+);
 ```
 
 ---
@@ -154,7 +165,7 @@ Any file or directory placed in `_public/` is served directly at the server root
 
 - `_public/index.html` -> `http://localhost:8090/`
 - `_public/images/logo.png` -> `http://localhost:8090/images/logo.png`
-- `_public/maps/mafia/lost-heaven/index.html` -> `http://localhost:8090/maps/mafia/lost-heaven/`
+- `_public/test/index.html` -> `http://localhost:8090/test/`
 
 Nested directories containing an `index.html` file are resolved automatically when requested with or without a trailing slash.
 
@@ -176,7 +187,9 @@ import AlsaBase from "alsabase";
 const pb = new AlsaBase("http://127.0.0.1:8090");
 
 // 1. Authenticate
-await pb.collection("users").authWithPassword("user@example.com", "password123");
+await pb
+  .collection("users")
+  .authWithPassword("user@example.com", "password123");
 
 // 2. Fetch Records with Filter & Sorting
 const result = await pb.collection("posts").getList(1, 20, {
@@ -205,14 +218,14 @@ const serverLogs = await pb.logs.getList(1, 50, { level: "ERROR" });
 
 ## CLI & Development Commands
 
-| Command | Description |
-| :--- | :--- |
-| `npm run dev` | Runs backend server (8090) and Vite frontend (5173) concurrently |
-| `npm run server:dev` | Runs backend server with automatic file restart on changes |
-| `npm run client:dev` | Runs frontend development server |
-| `npm run build` | Typechecks and compiles production build |
-| `npm run typecheck:all` | Runs full TypeScript compiler check on both backend and frontend |
-| `npm run build --prefix packages/alsabase` | Builds the `alsabase` SDK package |
+| Command                                    | Description                                                      |
+| :----------------------------------------- | :--------------------------------------------------------------- |
+| `npm run dev`                              | Runs backend server (8090) and Vite frontend (5173) concurrently |
+| `npm run server:dev`                       | Runs backend server with automatic file restart on changes       |
+| `npm run client:dev`                       | Runs frontend development server                                 |
+| `npm run build`                            | Typechecks and compiles production build                         |
+| `npm run typecheck:all`                    | Runs full TypeScript compiler check on both backend and frontend |
+| `npm run build --prefix packages/alsabase` | Builds the `alsabase` SDK package                                |
 
 ---
 

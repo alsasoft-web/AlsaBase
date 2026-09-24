@@ -18,6 +18,7 @@ export interface FieldDef {
   type: FieldType;
   required?: boolean;
   unique?: boolean;
+  indexed?: boolean;
   presentable?: boolean;
   hidden?: boolean;
   helpText?: string;
@@ -60,6 +61,15 @@ export interface CollectionDef {
   options?: Record<string, any>;
   created_at: string;
   updated_at: string;
+}
+
+export interface TableIndexInfo {
+  name: string;
+  tableName: string;
+  unique: boolean;
+  columns: string[];
+  sql?: string;
+  primaryKey?: boolean;
 }
 
 export interface HookRouteDef {
@@ -290,6 +300,35 @@ export const api = {
   async truncateCollection(nameOrId: string) {
     return request<{ success: boolean; changes?: number }>(
       `/collections/${nameOrId}/truncate`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  // Table Indexes
+  async getTableIndexes(collectionName: string) {
+    return request<{ items: TableIndexInfo[]; total: number }>(
+      `/collections/${collectionName}/indexes`,
+    );
+  },
+
+  async createTableIndex(
+    collectionName: string,
+    data: { name?: string; columns?: string[]; unique?: boolean; rawSql?: string },
+  ) {
+    return request<{ name: string; sql: string }>(
+      `/collections/${collectionName}/indexes`,
+      {
+        method: "POST",
+        body: JSON.stringify(data),
+      },
+    );
+  },
+
+  async dropTableIndex(collectionName: string, indexName: string) {
+    return request<{ success: boolean }>(
+      `/collections/${collectionName}/indexes/${indexName}`,
       {
         method: "DELETE",
       },
