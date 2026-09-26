@@ -212,6 +212,11 @@ export const CollectionsView: React.FC = () => {
   const [newIndexRawSql, setNewIndexRawSql] = useState("");
   const [useRawSql, setUseRawSql] = useState(false);
 
+  // JSON expand modal
+  const [jsonExpandModalOpen, setJsonExpandModalOpen] = useState(false);
+  const [jsonExpandContent, setJsonExpandContent] = useState("");
+  const [jsonExpandTitle, setJsonExpandTitle] = useState("");
+
   // Schema Drawer Index Form State
   const [schemaIndexCols, setSchemaIndexCols] = useState<string[]>([]);
   const [schemaIndexUnique, setSchemaIndexUnique] = useState(false);
@@ -526,6 +531,22 @@ export const CollectionsView: React.FC = () => {
     }
 
     const cleanFields = fields.filter((f) => f.name !== "tokenKey");
+
+    // Check for duplicate field names before submitting
+    const fieldNamesSeen = new Set<string>();
+    for (const f of cleanFields) {
+      const normalized = f.name.trim().toLowerCase();
+      if (!normalized) continue;
+      if (fieldNamesSeen.has(normalized)) {
+        notifications.show({
+          title: "Duplicate Field Name",
+          message: `Field name "${f.name}" is used more than once. Each field must have a unique name.`,
+          color: "red",
+        });
+        return;
+      }
+      fieldNamesSeen.add(normalized);
+    }
 
     try {
       if (editingCollectionName) {
@@ -942,7 +963,7 @@ export const CollectionsView: React.FC = () => {
   );
 
   const authCollections = filteredCollections.filter(
-    (c) => c.type === "auth" || c.name === "users",
+    (c) => (c.type === "auth" || c.name === "users") && c.name !== "_superusers",
   );
   const baseCollections = filteredCollections.filter(
     (c) => c.type !== "auth" && c.name !== "users",
@@ -2600,27 +2621,68 @@ export const CollectionsView: React.FC = () => {
                                   }
 
                                   if (f.type === "json") {
+                                    const rawJson = typeof rec[f.name] === "object"
+                                      ? JSON.stringify(rec[f.name], null, 2)
+                                      : String(rec[f.name] ?? "");
+                                    const preview = rawJson.length > 60
+                                      ? rawJson.slice(0, 60) + "..."
+                                      : rawJson;
                                     return (
                                       <Table.Td key={f.name}>
                                         <Code
+                                          onClick={() => {
+                                            setJsonExpandTitle(f.name);
+                                            setJsonExpandContent(rawJson);
+                                            setJsonExpandModalOpen(true);
+                                          }}
                                           style={{
-                                            backgroundColor:
-                                              "var(--color-bg-well)",
+                                            backgroundColor: "var(--color-bg-well)",
                                             color: "#38bdf8",
                                             fontSize: "11px",
-                                            border:
-                                              "1px solid var(--color-border)",
+                                            border: "1px solid var(--color-border)",
                                             maxWidth: 200,
                                             display: "inline-block",
                                             overflow: "hidden",
                                             textOverflow: "ellipsis",
                                             whiteSpace: "nowrap",
+                                            cursor: "pointer",
                                           }}
+                                          title="Click to expand"
                                         >
-                                          {typeof rec[f.name] === "object"
-                                            ? JSON.stringify(rec[f.name])
-                                            : String(rec[f.name] ?? "")}
+                                          {preview || "-"}
                                         </Code>
+                                      </Table.Td>
+                                    );
+                                  }
+
+                                  if (f.type === "url") {
+                                    const urlVal = rec[f.name] != null ? String(rec[f.name]) : "";
+                                    return (
+                                      <Table.Td key={f.name}>
+                                        {urlVal ? (
+                                          <a
+                                            href={urlVal}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                              color: "#38bdf8",
+                                              fontSize: "12.5px",
+                                              fontFamily: "var(--font-mono)",
+                                              display: "inline-block",
+                                              maxWidth: 220,
+                                              overflow: "hidden",
+                                              textOverflow: "ellipsis",
+                                              whiteSpace: "nowrap",
+                                              textDecoration: "none",
+                                              verticalAlign: "middle",
+                                            }}
+                                            title={urlVal}
+                                          >
+                                            {urlVal}
+                                          </a>
+                                        ) : (
+                                          <Text size="xs" c="dimmed">-</Text>
+                                        )}
                                       </Table.Td>
                                     );
                                   }
@@ -4146,40 +4208,105 @@ export const CollectionsView: React.FC = () => {
                                 </Stack>
                               ) : (
                                 <>
-                                  <Grid mb="sm">
-                                    <Grid.Col span={6}>
-                                      <NumberInput
-                                        label="Min Value / Length"
-                                        placeholder="e.g. 0"
-                                        size="xs"
-                                        value={field.min ?? ""}
-                                        onChange={(val) =>
-                                          updateField(idx, {
-                                            min:
-                                              typeof val === "number"
-                                                ? val
+                                  {/* Min/Max: hidden for bool; labeled correctly for number vs text */}
+                                  {field.type !== "bool" && (
+                                    <Grid mb="sm">
+                                      <Grid.Col span={6}>
+                                        <NumberInput
+                                          label={field.type === "number" ? "Min Value" : "Min Length"}
+                                          placeholder="e.g. 0"
+                                          size="xs"
+                                          value={field.min ?? ""}
+                                          onChange={(val) =>
+                                            updateField(idx, {
+                                              min:
+                                                typeof val === "number"
+                                                  ? val
+                                                  : undefined,
+                                            })
+                                          }
+                                          styles={{
+                                            input: {
+                                              backgroundColor: "var(--color-bg-well)",
+                                              borderColor: "var(--color-border)",
+                                            },
+                                          }}
+                                        />
+                                      </Grid.Col>
+                                      <Grid.Col span={6}>
+                                        <NumberInput
+                                          label={field.type === "number" ? "Max Value" : "Max Length"}
+                                          placeholder={field.type === "number" ? "e.g. 1000" : "e.g. 5000"}
+                                          size="xs"
+                                          value={field.max ?? ""}
+                                          onChange={(val) =>
+                                            updateField(idx, {
+                                              max:
+                                                typeof val === "number"
+                                                  ? val
+                                                  : undefined,
+                                            })
+                                          }
+                                          styles={{
+                                            input: {
+                                              backgroundColor: "var(--color-bg-well)",
+                                              borderColor: "var(--color-border)",
+                                            },
+                                          }}
+                                        />
+                                      </Grid.Col>
+                                    </Grid>
+                                  )}
+
+                                  {/* Number-specific: noDecimal toggle */}
+                                  {field.type === "number" && (
+                                    <Checkbox
+                                      size="xs"
+                                      label="No decimal (integer only)"
+                                      checked={field.noDecimal || false}
+                                      onChange={(e) =>
+                                        updateField(idx, { noDecimal: e.currentTarget.checked })
+                                      }
+                                      mb="sm"
+                                    />
+                                  )}
+
+                                  {/* URL-specific: pattern validation */}
+                                  {field.type === "url" && (
+                                    <Paper
+                                      p="xs"
+                                      withBorder
+                                      mb="sm"
+                                      style={{
+                                        backgroundColor: "var(--color-bg-card)",
+                                        borderColor: "var(--color-border)",
+                                        borderRadius: 6,
+                                      }}
+                                    >
+                                      <Group justify="space-between" align="center">
+                                        <div>
+                                          <Text size="xs" fw={600} c="var(--color-text-primary)">
+                                            Validate URL format
+                                          </Text>
+                                          <Text size="11px" c="dimmed">
+                                            Enforce https?:// or http:// prefix on save
+                                          </Text>
+                                        </div>
+                                        <Switch
+                                          checked={Boolean(field.pattern)}
+                                          onChange={(e) =>
+                                            updateField(idx, {
+                                              pattern: e.currentTarget.checked
+                                                ? "^https?:\\/\\/.+"
                                                 : undefined,
-                                          })
-                                        }
-                                      />
-                                    </Grid.Col>
-                                    <Grid.Col span={6}>
-                                      <NumberInput
-                                        label="Max Value / Length"
-                                        placeholder="e.g. 5000"
-                                        size="xs"
-                                        value={field.max ?? ""}
-                                        onChange={(val) =>
-                                          updateField(idx, {
-                                            max:
-                                              typeof val === "number"
-                                                ? val
-                                                : undefined,
-                                          })
-                                        }
-                                      />
-                                    </Grid.Col>
-                                  </Grid>
+                                            })
+                                          }
+                                          size="sm"
+                                          color="neonGreen"
+                                        />
+                                      </Group>
+                                    </Paper>
+                                  )}
 
                                   <TextInput
                                     label="Help text"
@@ -5619,6 +5746,50 @@ export const CollectionsView: React.FC = () => {
         collections={collections}
         onSelectCollection={handleSelectCollection}
       />
+
+      {/* JSON Expand Modal */}
+      <Modal
+        opened={jsonExpandModalOpen}
+        onClose={() => setJsonExpandModalOpen(false)}
+        size="lg"
+        title={
+          <Group gap={8}>
+            <IconCode size={18} color="var(--color-neon-primary)" />
+            <Text fw={700} size="md" style={{ fontFamily: "var(--font-mono)" }}>
+              {jsonExpandTitle}
+            </Text>
+          </Group>
+        }
+        styles={{
+          header: {
+            backgroundColor: "var(--color-bg-card)",
+            borderBottom: "1px solid var(--color-border)",
+          },
+          body: { backgroundColor: "var(--color-bg-card)", padding: 0 },
+          content: {
+            backgroundColor: "var(--color-bg-card)",
+            border: "1px solid var(--color-border)",
+          },
+        }}
+      >
+        <ScrollArea h={480} p="md">
+          <Code
+            block
+            style={{
+              backgroundColor: "var(--color-bg-well)",
+              color: "#38bdf8",
+              fontSize: "12.5px",
+              fontFamily: "var(--font-mono)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 6,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {jsonExpandContent}
+          </Code>
+        </ScrollArea>
+      </Modal>
     </>
   );
 };

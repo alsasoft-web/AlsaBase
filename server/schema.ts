@@ -289,6 +289,17 @@ export function createCollection(payload: {
   }
 
   const fields = (payload.fields || []).filter((f) => f.name !== 'tokenKey');
+
+  // Reject duplicate field names within the payload
+  const fieldNamesSeen = new Set<string>();
+  for (const f of fields) {
+    const normalized = f.name.trim().toLowerCase();
+    if (fieldNamesSeen.has(normalized)) {
+      throw new Error(`Duplicate field name "${f.name}". Each field must have a unique name.`);
+    }
+    fieldNamesSeen.add(normalized);
+  }
+
   const rules = payload.rules || { list: 'public', view: 'public', create: 'auth', update: 'auth', delete: 'admin' };
   const type = payload.type || (name === 'users' ? 'auth' : 'base');
   const indexes = (payload.indexes || []).filter((idx) => !idx.includes('tokenKey'));
@@ -716,6 +727,22 @@ export function updateCollection(
   // Handle new fields to add via ALTER TABLE
   const currentFieldNames = new Set(current.fields.map((f) => f.name.toLowerCase()));
   const newFields = payload.fields || current.fields;
+
+  // Reject duplicate field names in the incoming payload
+  if (payload.fields) {
+    const reserved = new Set(['id', 'created_at', 'updated_at']);
+    const seen = new Set<string>();
+    for (const f of payload.fields) {
+      const normalized = f.name.trim().toLowerCase();
+      if (reserved.has(normalized)) {
+        throw new Error(`Field name "${f.name}" is reserved and cannot be used.`);
+      }
+      if (seen.has(normalized)) {
+        throw new Error(`Duplicate field name "${f.name}". Each field must have a unique name.`);
+      }
+      seen.add(normalized);
+    }
+  }
 
   for (const field of newFields) {
     const colName = sanitizeIdentifier(field.name.trim().toLowerCase());
