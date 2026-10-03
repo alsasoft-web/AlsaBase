@@ -578,7 +578,12 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
             )
             .map((field: FieldDef) => {
               const isFile = field.type === 'file' || field.name === 'avatar';
-              const val = formData[field.name];
+              const val =
+                formData[field.name] !== undefined
+                  ? formData[field.name]
+                  : Object.entries(formData).find(
+                      ([k]) => k.toLowerCase() === field.name.toLowerCase()
+                    )?.[1];
 
               return (
                 <Paper
@@ -717,7 +722,18 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
                         Enable or disable {field.name}
                       </Text>
                       <Switch
-                        checked={Boolean(val)}
+                        checked={
+                          val === true ||
+                          val === 1 ||
+                          val === '1' ||
+                          val === 'true' ||
+                          val === 'True' ||
+                          val === 't' ||
+                          val === 'T' ||
+                          val === 'yes' ||
+                          val === 'YES' ||
+                          (typeof val === 'string' && val.trim().toLowerCase() === 'true')
+                        }
                         onChange={(e) => {
                           const checked = e.currentTarget.checked;
                           setFormData((prev) => ({

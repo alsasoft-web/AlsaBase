@@ -2467,20 +2467,41 @@ export const CollectionsView: React.FC = () => {
                                     f.type === "file" || f.name === "avatar";
 
                                   if (f.type === "bool") {
+                                    const rawVal =
+                                      rec[f.name] !== undefined
+                                        ? rec[f.name]
+                                        : Object.entries(rec).find(
+                                            ([k]) =>
+                                              k.toLowerCase() ===
+                                              f.name.toLowerCase()
+                                          )?.[1];
+                                    const isTrue =
+                                      rawVal === true ||
+                                      rawVal === 1 ||
+                                      rawVal === "1" ||
+                                      rawVal === "true" ||
+                                      rawVal === "True" ||
+                                      rawVal === "t" ||
+                                      rawVal === "T" ||
+                                      rawVal === "yes" ||
+                                      rawVal === "YES" ||
+                                      (typeof rawVal === "string" &&
+                                        rawVal.trim().toLowerCase() === "true");
+
                                     return (
                                       <Table.Td key={f.name}>
                                         <Badge
                                           size="xs"
                                           variant="filled"
                                           style={{
-                                            backgroundColor: rec[f.name]
+                                            backgroundColor: isTrue
                                               ? "rgba(16, 229, 122, 0.15)"
                                               : "rgba(239, 68, 68, 0.12)",
-                                            color: rec[f.name]
+                                            color: isTrue
                                               ? "var(--color-neon-primary)"
                                               : "#f87171",
                                             border: `1px solid ${
-                                              rec[f.name]
+                                              isTrue
                                                 ? "var(--color-border-glow)"
                                                 : "rgba(239, 68, 68, 0.25)"
                                             }`,
@@ -2489,7 +2510,7 @@ export const CollectionsView: React.FC = () => {
                                             fontSize: "10.5px",
                                           }}
                                         >
-                                          {rec[f.name] ? "True" : "False"}
+                                          {isTrue ? "True" : "False"}
                                         </Badge>
                                       </Table.Td>
                                     );
@@ -2687,6 +2708,15 @@ export const CollectionsView: React.FC = () => {
                                     );
                                   }
 
+                                  const fieldVal =
+                                    rec[f.name] !== undefined
+                                      ? rec[f.name]
+                                      : Object.entries(rec).find(
+                                          ([k]) =>
+                                            k.toLowerCase() ===
+                                            f.name.toLowerCase()
+                                        )?.[1];
+
                                   return (
                                     <Table.Td key={f.name}>
                                       <Text
@@ -2698,9 +2728,9 @@ export const CollectionsView: React.FC = () => {
                                           fontSize: "12.5px",
                                         }}
                                       >
-                                        {rec[f.name] !== undefined &&
-                                        rec[f.name] !== null
-                                          ? String(rec[f.name])
+                                        {fieldVal !== undefined &&
+                                        fieldVal !== null
+                                          ? String(fieldVal)
                                           : "-"}
                                       </Text>
                                     </Table.Td>

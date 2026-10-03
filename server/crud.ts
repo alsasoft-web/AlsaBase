@@ -295,7 +295,19 @@ export function parseFilterExpression(
     if (fieldDef && fieldDef.type === 'number' && !isNaN(Number(paramVal))) {
       paramVal = Number(paramVal);
     } else if (fieldDef && fieldDef.type === 'bool') {
-      paramVal = paramVal === true || paramVal === 'true' || paramVal === '1' || paramVal === 1 ? 1 : 0;
+      paramVal =
+        paramVal === true ||
+        paramVal === 1 ||
+        paramVal === '1' ||
+        paramVal === 'true' ||
+        paramVal === 'True' ||
+        paramVal === 't' ||
+        paramVal === 'T' ||
+        paramVal === 'yes' ||
+        paramVal === 'YES' ||
+        (typeof paramVal === 'string' && paramVal.trim().toLowerCase() === 'true')
+          ? 1
+          : 0;
     }
 
     if (sqlParts.length > 0) {
@@ -317,7 +329,20 @@ export function parseFilterExpression(
 function formatFieldValue(field: FieldDef, value: any): any {
   if (value === undefined || value === null) return null;
   if (field.type === 'number') return Number(value);
-  if (field.type === 'bool') return value === true || value === 1 || value === 'true' ? 1 : 0;
+  if (field.type === 'bool') {
+    return value === true ||
+      value === 1 ||
+      value === 'true' ||
+      value === 'True' ||
+      value === '1' ||
+      value === 't' ||
+      value === 'T' ||
+      value === 'yes' ||
+      value === 'YES' ||
+      (typeof value === 'string' && value.trim().toLowerCase() === 'true')
+      ? 1
+      : 0;
+  }
   if (field.type === 'json') return typeof value === 'string' ? value : JSON.stringify(value);
   if (field.type === 'file') return typeof value === 'string' ? value : (value?.name || String(value));
   if (field.type === 'date') return new Date(value).toISOString();
@@ -341,21 +366,46 @@ export function formatRecordOutput(
   if (!formatted.created && formatted.created_at) formatted.created = formatted.created_at;
   if (!formatted.updated && formatted.updated_at) formatted.updated = formatted.updated_at;
 
+  const rowKeys = Object.keys(row);
+
   for (const field of fields) {
     if (field.name === 'password' || field.name === 'tokenKey') {
       delete formatted[field.name];
     }
-    const val = row[field.name];
+
+    let val = row[field.name];
+    if (val === undefined) {
+      const lowerName = field.name.toLowerCase();
+      const matchedKey = rowKeys.find((k) => k.toLowerCase() === lowerName);
+      if (matchedKey !== undefined) {
+        val = row[matchedKey];
+      }
+    }
+
     if (val !== null && val !== undefined) {
       if (field.type === 'bool') {
-        formatted[field.name] = val === 1 || val === true;
+        formatted[field.name] =
+          val === 1 ||
+          val === true ||
+          val === '1' ||
+          val === 'true' ||
+          val === 'True' ||
+          val === 't' ||
+          val === 'T' ||
+          val === 'yes' ||
+          val === 'YES' ||
+          (typeof val === 'string' && val.trim().toLowerCase() === 'true');
       } else if (field.type === 'json' || field.type === 'file') {
         try {
           formatted[field.name] = typeof val === 'string' ? JSON.parse(val) : val;
         } catch {
           formatted[field.name] = val;
         }
+      } else {
+        formatted[field.name] = val;
       }
+    } else if (field.type === 'bool') {
+      formatted[field.name] = false;
     }
   }
 
