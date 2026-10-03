@@ -243,6 +243,26 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     } catch {
       // ignore
     }
+
+    const isAuthRoute =
+      url.startsWith("/auth/superusers/login") ||
+      url.startsWith("/auth/superusers/setup") ||
+      url.startsWith("/auth/superusers/has-initial") ||
+      url.startsWith("/auth/users/login");
+
+    if (
+      !isAuthRoute &&
+      (response.status === 401 ||
+        (response.status === 403 &&
+          (errorMsg.toLowerCase().includes("superuser access required") ||
+            errorMsg.toLowerCase().includes("unauthorized") ||
+            errorMsg.toLowerCase().includes("token") ||
+            errorMsg.toLowerCase().includes("forbidden"))))
+    ) {
+      api.logout();
+      window.dispatchEvent(new CustomEvent("alsabase_unauthorized"));
+    }
+
     throw new Error(errorMsg);
   }
 

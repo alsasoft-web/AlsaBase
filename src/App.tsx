@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import "@mantine/core/styles.css";
 import "@mantine/notifications/styles.css";
-import { MantineProvider, AppShell } from "@mantine/core";
+import { MantineProvider, AppShell, Center, Loader, Stack } from "@mantine/core";
 import { ModalsProvider } from "@mantine/modals";
 import { Notifications } from "@mantine/notifications";
 import { theme } from "./theme";
@@ -15,6 +15,7 @@ import { LogsView } from "./components/views/LogsView";
 import { StaticHostingView } from "./components/views/StaticHostingView";
 import { SettingsView } from "./components/views/SettingsView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { Logo } from "./components/Logo";
 
 const VALID_TABS = [
   "collections",
@@ -45,8 +46,26 @@ function getTabFromPath(pathname: string): TabType | null {
 
 export default function App() {
   const [user, setUser] = useState<any>(() => {
+    const token =
+      localStorage.getItem("alsabase_token") ||
+      localStorage.getItem("AlsaBase_token");
     const saved = localStorage.getItem("alsabase_user");
-    return saved ? JSON.parse(saved) : null;
+    if (!token || !saved) return null;
+    try {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.isSuperuser === false) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isVerifyingAuth, setIsVerifyingAuth] = useState<boolean>(() => {
+    const token =
+      localStorage.getItem("alsabase_token") ||
+      localStorage.getItem("AlsaBase_token");
+    const saved = localStorage.getItem("alsabase_user");
+    return !!(token && saved);
   });
 
   const [activeTab, setActiveTab] = useState<string>(() => {
@@ -59,6 +78,51 @@ export default function App() {
     return "collections";
   });
   const [health, setHealth] = useState<any>(null);
+
+  // Listen for unauthorized/auth expiration events
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+      setIsVerifyingAuth(false);
+    };
+
+    window.addEventListener("alsabase_unauthorized", handleUnauthorized);
+    return () =>
+      window.removeEventListener("alsabase_unauthorized", handleUnauthorized);
+  }, []);
+
+  // Verify authentication session with server on startup
+  useEffect(() => {
+    const token =
+      localStorage.getItem("alsabase_token") ||
+      localStorage.getItem("AlsaBase_token");
+
+    if (!token) {
+      setUser(null);
+      setIsVerifyingAuth(false);
+      return;
+    }
+
+    api
+      .getMe()
+      .then((me) => {
+        if (!me || me.isSuperuser === false) {
+          api.logout();
+          setUser(null);
+        } else {
+          setUser(me);
+          localStorage.setItem("alsabase_user", JSON.stringify(me));
+          localStorage.setItem("AlsaBase_user", JSON.stringify(me));
+        }
+      })
+      .catch(() => {
+        api.logout();
+        setUser(null);
+      })
+      .finally(() => {
+        setIsVerifyingAuth(false);
+      });
+  }, []);
 
   const updateUrlAndTitle = (tab: string, replace = false) => {
     const title = `AlsaBase - ${TAB_TITLES[tab as TabType] || tab}`;
@@ -107,10 +171,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    api
-      .getHealth()
-      .then(setHealth)
-      .catch(() => {});
+    if (user) {
+      api
+        .getHealth()
+        .then(setHealth)
+        .catch(() => {});
+    }
   }, [user]);
 
   const handleAuthSuccess = (authenticatedUser: any) => {
@@ -157,6 +223,19 @@ export default function App() {
     return () =>
       window.removeEventListener("alsabase_nav_change", handleNavChange);
   }, []);
+
+  if (isVerifyingAuth) {
+    return (
+      <MantineProvider theme={theme} defaultColorScheme="dark">
+        <Center style={{ height: "100vh", backgroundColor: "var(--color-bg-base)" }}>
+          <Stack align="center" gap="md">
+            <Logo size={48} />
+            <Loader color="var(--color-neon-primary, #10e57a)" size="md" type="dots" />
+          </Stack>
+        </Center>
+      </MantineProvider>
+    );
+  }
 
   if (!user) {
     return (
