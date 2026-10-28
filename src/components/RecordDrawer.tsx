@@ -12,6 +12,7 @@ import {
   NumberInput,
   Textarea,
   Select,
+  MultiSelect,
   Tooltip,
   FileInput,
   Badge,
@@ -39,9 +40,10 @@ import {
   IconPlus,
   IconLock,
   IconShieldCheck,
-  IconCheck
+  IconCheck,
+  IconGitBranch
 } from '@tabler/icons-react';
-import { CollectionDef, FieldDef, FieldType } from '../api/client';
+import { api, CollectionDef, FieldDef, FieldType } from '../api/client';
 
 interface RecordDrawerProps {
   opened: boolean;
@@ -74,6 +76,8 @@ function getFieldIcon(type: FieldType) {
       return <IconLink size={15} color="#3b82f6" />;
     case 'select':
       return <IconListCheck size={15} color="#14b8a6" />;
+    case 'relation':
+      return <IconGitBranch size={15} color="var(--color-neon-primary)" />;
     default:
       return <IconLetterT size={15} color="#94a3b8" />;
   }
@@ -92,6 +96,9 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
   const [newPassword, setNewPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [saving, setSaving] = useState(false);
+  const [relationOptions, setRelationOptions] = useState<
+    Record<string, { value: string; label: string }[]>
+  >({});
 
   const isAuth = collection?.type === 'auth' || collection?.name === 'users';
   const isEditing = Boolean(record?.id);
@@ -132,6 +139,50 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
     setChangePassword(false);
     setNewPassword('');
     setPasswordConfirm('');
+
+    if (opened && collection) {
+      const fList: FieldDef[] = Array.isArray(collection.fields) ? collection.fields : [];
+      const relFields = fList.filter(
+        (f) => (f.type === 'relation' || Boolean(f.relationCollection)) && f.relationCollection
+      );
+      relFields.forEach(async (rf) => {
+        if (!rf.relationCollection) return;
+        try {
+          const res = await api.listRecords(rf.relationCollection, { limit: 100 });
+          const targetCol = rf.relationField || 'id';
+          const opts = (res.items || [])
+            .map((item: any) => {
+              const rawTargetVal = item[targetCol] ?? item.id;
+              if (rawTargetVal === undefined || rawTargetVal === null) return null;
+              const valStr = String(rawTargetVal);
+              const displayTitle =
+                item.title ||
+                item.name ||
+                item.email ||
+                item.username ||
+                item.repack_id ||
+                item.label ||
+                '';
+              const label =
+                displayTitle && String(displayTitle) !== valStr
+                  ? `${displayTitle} (${valStr})`
+                  : valStr;
+              return { value: valStr, label };
+            })
+            .filter(Boolean) as { value: string; label: string }[];
+          // Deduplicate by value
+          const seenVals = new Set<string>();
+          const uniqueOpts = opts.filter((o) => {
+            if (seenVals.has(o.value)) return false;
+            seenVals.add(o.value);
+            return true;
+          });
+          setRelationOptions((prev) => ({ ...prev, [rf.name]: uniqueOpts }));
+        } catch {
+          // ignore
+        }
+      });
+    }
   }, [record, collection, opened]);
 
   if (!collection) return null;
@@ -605,7 +656,9 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
                     </Group>
                     <Group gap="xs">
                       <Badge size="xs" variant="outline" color="gray" style={{ textTransform: 'lowercase', fontFamily: 'var(--font-mono)' }}>
-                        {field.type}
+                        {field.relationCollection
+                          ? `relation → ${field.relationCollection}.${field.relationField || 'id'}`
+                          : field.type}
                       </Badge>
                       {field.helpText && (
                         <Tooltip label={field.helpText} withArrow>
@@ -638,12 +691,14 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
                                 ? /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(val) || val.startsWith('data:image/') || val.startsWith('http')
                                 : false;
 
+                              const authToken = localStorage.getItem('alsabase_token') || localStorage.getItem('AlsaBase_token') || '';
+                              const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : '';
                               const previewSrc = typeof val === 'object' && val?.data
                                 ? val.data
                                 : typeof val === 'string' && val && val !== '[object Object]'
                                 ? (val.startsWith('data:') || val.startsWith('http') || val.startsWith('/api/')
                                     ? val
-                                    : `/api/files/${encodeURIComponent(collection.name)}/${encodeURIComponent(record?.id || '')}/${encodeURIComponent(val)}`)
+                                    : `/api/files/${encodeURIComponent(collection.name)}/${encodeURIComponent(record?.id || '')}/${encodeURIComponent(val)}${tokenParam}`)
                                 : '';
 
                               if (isImg && previewSrc) {
@@ -764,6 +819,79 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
                         }
                       }}
                     />
+                  ) : (field.type === 'relation' || Boolean(field.relationCollection)) &&
+                    field.relationCollection ? (
+                    field.maxSelect && field.maxSelect > 1 ? (
+                      <MultiSelect
+                        searchable
+                        clearable
+                        placeholder={`Select ${field.relationCollection} (${field.relationField || 'id'})...`}
+                        data={relationOptions[field.name] || []}
+                        value={
+                          Array.isArray(val)
+                            ? val.map(String)
+                            : typeof val === 'string' && val.trim().startsWith('[')
+                            ? (() => {
+                                try {
+                                  return JSON.parse(val).map(String);
+                                } catch {
+                                  return val ? [String(val)] : [];
+                                }
+                              })()
+                            : val
+                            ? [String(val)]
+                            : []
+                        }
+                        onChange={(arr) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            [field.name]: arr
+                          }))
+                        }
+                        size="sm"
+                        styles={{
+                          input: {
+                            backgroundColor: 'var(--color-bg-well)',
+                            borderColor: 'var(--color-border)',
+                            color: 'var(--color-text-primary)',
+                            fontFamily: 'var(--font-mono)'
+                          }
+                        }}
+                      />
+                    ) : (
+                      <Select
+                        searchable
+                        clearable
+                        placeholder={`Select ${field.relationCollection} (${field.relationField || 'id'})...`}
+                        data={
+                          val &&
+                          !(relationOptions[field.name] || []).some(
+                            (o) => o.value === String(val)
+                          )
+                            ? [
+                                { value: String(val), label: String(val) },
+                                ...(relationOptions[field.name] || [])
+                              ]
+                            : relationOptions[field.name] || []
+                        }
+                        value={val !== undefined && val !== null && val !== '' ? String(val) : null}
+                        onChange={(v) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            [field.name]: v || ''
+                          }))
+                        }
+                        size="sm"
+                        styles={{
+                          input: {
+                            backgroundColor: 'var(--color-bg-well)',
+                            borderColor: 'var(--color-border)',
+                            color: 'var(--color-text-primary)',
+                            fontFamily: 'var(--font-mono)'
+                          }
+                        }}
+                      />
+                    )
                   ) : field.type === 'select' && field.values && field.values.length > 0 ? (
                     <Select
                       data={field.values}

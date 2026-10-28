@@ -42,7 +42,7 @@ async function runTests() {
   );
   console.log("   Record File URL:", recordFileUrl);
   if (
-    !recordFileUrl.includes("/api/static-files/file/posts/rec_123/cover.png")
+    !recordFileUrl.includes("/api/files/posts/rec_123/cover.png")
   ) {
     throw new Error("Record file URL generation failed");
   }

@@ -2,9 +2,11 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db, hashPassword, verifyPassword } from './db';
 import { getCollection, listCollections, createCollection, updateCollection, deleteCollection, sanitizeIdentifier, FieldDef, getTableIndexes, createTableIndex, dropTableIndex } from './schema';
-import { AuthPayload, requireSuperuser, generateToken, requireAuth } from './auth';
+import { AuthPayload, requireSuperuser, generateToken, requireAuth, authRouter, recordFailedOtpAttempt, clearFailedOtpAttempts } from './auth';
 import { broadcastRecordEvent } from './events';
-import { saveRecordFile, deleteRecordFiles } from './files';
+import { saveRecordFile, deleteRecordFiles, deleteCollectionFiles, FILES_DIR } from './files';
+import path from 'node:path';
+import fs from 'node:fs';
 import { getAllSettings, renderEmailTemplate, sendEmail } from './settings';
 
 export const collectionsRouter = Router();
@@ -89,13 +91,11 @@ export function evaluateRule(
         .replace(/@request\.auth\.email/g, JSON.stringify(auth?.email || ''))
         .replace(/@request\.auth\.username/g, JSON.stringify(auth?.username || ''))
         .replace(/@request\.auth\.role/g, JSON.stringify(auth?.role || ''))
-        .replace(/&&/g, '&&')
-        .replace(/\|\|/g, '||')
-        .replace(/=/g, '===')
-        .replace(/======/g, '===')
-        .replace(/====/g, '===')
         .replace(/!==/g, '!==')
-        .replace(/!=/g, '!==');
+        .replace(/!=(?!=)/g, '!==')
+        .replace(/===/g, '===')
+        .replace(/==(?!=)/g, '===')
+        .replace(/(?<![=!<>])=(?!=)/g, '===');
 
       const recordContext = { ...record };
       const keys = Object.keys(recordContext);
@@ -186,10 +186,12 @@ export function ruleToSqlWhere(
       sqlExpr = sqlExpr.replace(/@request\.auth\.id/g, `'${auth.id.replace(/'/g, "''")}'`);
       sqlExpr = sqlExpr.replace(/@request\.auth\.email/g, `'${(auth.email || '').replace(/'/g, "''")}'`);
       sqlExpr = sqlExpr.replace(/@request\.auth\.username/g, `'${(auth.username || '').replace(/'/g, "''")}'`);
+      sqlExpr = sqlExpr.replace(/@request\.auth\.role/g, `'${(auth.role || '').replace(/'/g, "''")}'`);
     } else {
       sqlExpr = sqlExpr.replace(/@request\.auth\.id/g, `''`);
       sqlExpr = sqlExpr.replace(/@request\.auth\.email/g, `''`);
       sqlExpr = sqlExpr.replace(/@request\.auth\.username/g, `''`);
+      sqlExpr = sqlExpr.replace(/@request\.auth\.role/g, `''`);
     }
 
     sqlExpr = sqlExpr.replace(/&&/g, 'AND').replace(/\|\|/g, 'OR').replace(/==/g, '=').replace(/!=/g, '<>');
@@ -219,30 +221,54 @@ export function parseFilterExpression(
     validColMap.set(f.name.toLowerCase(), f.name);
   }
 
-  // Split on logical connectors (&&, ||, AND, OR)
-  const tokens = trimmed.split(/(\s+(?:&&|\|\||AND|OR)\s+)/i);
+  // Split on top-level logical connectors (&&, ||, AND, OR) outside quotes
   const clauses: { logic: 'AND' | 'OR'; expr: string }[] = [];
   let nextLogic: 'AND' | 'OR' = 'AND';
+  let current = '';
+  let inQuote: '"' | "'" | null = null;
 
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i].trim();
-    if (!t) continue;
-    const upper = t.toUpperCase();
-    if (upper === '&&' || upper === 'AND') {
-      nextLogic = 'AND';
-    } else if (upper === '||' || upper === 'OR') {
-      nextLogic = 'OR';
-    } else {
-      clauses.push({ logic: nextLogic, expr: t });
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (inQuote) {
+      if (ch === inQuote && trimmed[i - 1] !== '\\') {
+        inQuote = null;
+      }
+      current += ch;
+      continue;
     }
+    if (ch === '"' || ch === "'") {
+      inQuote = ch;
+      current += ch;
+      continue;
+    }
+
+    const rest = trimmed.slice(i);
+    const logicMatch = rest.match(/^\s+(&&|\|\||AND|OR)\s+/i);
+    if (logicMatch) {
+      const expr = current.trim();
+      if (expr) clauses.push({ logic: nextLogic, expr });
+      const op = logicMatch[1].toUpperCase();
+      nextLogic = op === '||' || op === 'OR' ? 'OR' : 'AND';
+      current = '';
+      i += logicMatch[0].length - 1;
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) {
+    clauses.push({ logic: nextLogic, expr: current.trim() });
   }
 
   const sqlParts: string[] = [];
   const params: any[] = [];
 
   for (const item of clauses) {
+    let clauseExpr = item.expr.trim();
+    while (clauseExpr.startsWith('(') && clauseExpr.endsWith(')')) {
+      clauseExpr = clauseExpr.slice(1, -1).trim();
+    }
     // Match: column operator value
-    const match = item.expr.match(/^([a-zA-Z0-9_]+)\s*(=|==|!=|<>|~=|~|!~|>=|<=|>|<|LIKE|NOT\s+LIKE|ILIKE)\s*(.+)$/i);
+    const match = clauseExpr.match(/^([a-zA-Z0-9_]+)\s*(=|==|!=|<>|~=|~|!~|>=|<=|>|<|LIKE|NOT\s+LIKE|ILIKE)\s*(.+)$/i);
     if (!match) continue;
 
     const rawCol = match[1].trim().toLowerCase();
@@ -326,7 +352,7 @@ export function parseFilterExpression(
 }
 
 // Convert input values according to field definition
-function formatFieldValue(field: FieldDef, value: any): any {
+export function formatFieldValue(field: FieldDef, value: any): any {
   if (value === undefined || value === null) return null;
   if (field.type === 'number') return Number(value);
   if (field.type === 'bool') {
@@ -344,6 +370,7 @@ function formatFieldValue(field: FieldDef, value: any): any {
       : 0;
   }
   if (field.type === 'json') return typeof value === 'string' ? value : JSON.stringify(value);
+  if (field.type === 'relation' && Array.isArray(value)) return JSON.stringify(value);
   if (field.type === 'file') return typeof value === 'string' ? value : (value?.name || String(value));
   if (field.type === 'date') return new Date(value).toISOString();
   return String(value);
@@ -401,6 +428,18 @@ export function formatRecordOutput(
         } catch {
           formatted[field.name] = val;
         }
+      } else if (
+        field.type === 'relation' &&
+        field.maxSelect &&
+        field.maxSelect > 1 &&
+        typeof val === 'string' &&
+        val.trim().startsWith('[')
+      ) {
+        try {
+          formatted[field.name] = JSON.parse(val);
+        } catch {
+          formatted[field.name] = val;
+        }
       } else {
         formatted[field.name] = val;
       }
@@ -426,6 +465,101 @@ export function formatRecordOutput(
   }
 
   return formatted;
+}
+
+// Expand relation fields on formatted records when ?expand=field1,field2 or ?expand=* is passed
+export function expandRecords(
+  col: any,
+  items: any[],
+  expandParam: string | undefined,
+  auth?: AuthPayload
+): any[] {
+  if (!expandParam || !items || items.length === 0) return items;
+  const requestedFields = expandParam
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (requestedFields.length === 0) return items;
+
+  const expandAll = requestedFields.includes('*');
+  const relationFields = (col.fields || []).filter(
+    (f: FieldDef) =>
+      (f.type === 'relation' || Boolean(f.relationCollection)) &&
+      f.relationCollection &&
+      (expandAll || requestedFields.includes(f.name))
+  );
+
+  if (relationFields.length === 0) return items;
+
+  for (const field of relationFields) {
+    if (!field.relationCollection) continue;
+    const targetCol = getCollection(field.relationCollection);
+    if (!targetCol) continue;
+
+    let targetField = 'id';
+    try {
+      targetField = field.relationField ? sanitizeIdentifier(field.relationField) : 'id';
+    } catch {
+      targetField = 'id';
+    }
+
+    const isTargetAuth = targetCol.type === 'auth' || targetCol.name === 'users';
+
+    // Collect all unique foreign key IDs across all items
+    const idsToFetch = new Set<string>();
+    for (const item of items) {
+      const rawVal = item[field.name];
+      if (rawVal === undefined || rawVal === null || rawVal === '') continue;
+      if (Array.isArray(rawVal)) {
+        for (const v of rawVal) {
+          if (v) idsToFetch.add(String(v));
+        }
+      } else {
+        idsToFetch.add(String(rawVal));
+      }
+    }
+
+    if (idsToFetch.size === 0) continue;
+
+    const idsArray = Array.from(idsToFetch);
+    const placeholders = idsArray.map(() => '?').join(', ');
+    const recordsMap = new Map<string, any>();
+
+    try {
+      const rows = db
+        .prepare(`SELECT * FROM "${targetCol.name}" WHERE "${targetField}" IN (${placeholders})`)
+        .all(...idsArray) as any[];
+
+      for (const r of rows) {
+        if (evaluateRule(targetCol.rules?.view, auth, r)) {
+          const formatted = formatRecordOutput(targetCol.fields, r, auth, isTargetAuth);
+          recordsMap.set(String(r[targetField]), formatted);
+        }
+      }
+
+      for (const item of items) {
+        const rawVal = item[field.name];
+        if (rawVal === undefined || rawVal === null || rawVal === '') continue;
+        if (Array.isArray(rawVal)) {
+          const expandedList = rawVal
+            .map((v) => recordsMap.get(String(v)))
+            .filter(Boolean);
+          item.expand = item.expand || {};
+          item.expand[field.name] = expandedList;
+        } else {
+          const expandedRec = recordsMap.get(String(rawVal));
+          if (expandedRec) {
+            item.expand = item.expand || {};
+            item.expand[field.name] = expandedRec;
+          }
+        }
+      }
+    } catch {
+      // Ignore expand lookup errors for invalid target columns
+    }
+  }
+
+  return items;
 }
 
 // --- SCHEMA MANAGEMENT (Superuser Only) ---
@@ -475,6 +609,7 @@ collectionsRouter.delete('/:name/truncate', requireSuperuser, (req: Request, res
 
   try {
     const resRun = db.prepare(`DELETE FROM "${col.name}"`).run();
+    deleteCollectionFiles(col.name);
     res.json({ success: true, changes: resRun.changes });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -488,6 +623,7 @@ collectionsRouter.delete('/:name', requireSuperuser, (req: Request, res: Respons
   }
   const deleted = deleteCollection(name);
   if (!deleted) return res.status(404).json({ error: 'Collection not found' });
+  deleteCollectionFiles(name);
   res.json({ success: true });
 });
 
@@ -638,7 +774,10 @@ collectionsRouter.get('/:collection/records', (req: Request, res: Response) => {
     }
 
     const isAuth = col.type === 'auth' || col.name === 'users';
-    const formattedItems = rows.map((r) => formatRecordOutput(col.fields, r, auth, isAuth));
+    let formattedItems = rows.map((r) => formatRecordOutput(col.fields, r, auth, isAuth));
+    if (req.query.expand && typeof req.query.expand === 'string') {
+      formattedItems = expandRecords(col, formattedItems, req.query.expand, auth);
+    }
 
     res.json({
       page,
@@ -669,7 +808,11 @@ collectionsRouter.get('/:collection/records/:id', (req: Request, res: Response) 
   }
 
   const isAuth = col.type === 'auth' || col.name === 'users';
-  res.json(formatRecordOutput(col.fields, row, auth, isAuth));
+  const formatted = formatRecordOutput(col.fields, row, auth, isAuth);
+  if (req.query.expand && typeof req.query.expand === 'string') {
+    expandRecords(col, [formatted], req.query.expand, auth);
+  }
+  res.json(formatted);
 });
 
 // Create record
@@ -729,12 +872,16 @@ collectionsRouter.post('/:collection/records', (req: Request, res: Response) => 
   }
 
   // Save physical files to data/files/<collection>/<recordId>/<filename>
-  for (const field of col.fields) {
-    if (field.type === 'file' || field.name === 'avatar') {
-      if (bodyData[field.name]) {
-        bodyData[field.name] = saveRecordFile(col.name, id, bodyData[field.name]);
+  try {
+    for (const field of col.fields) {
+      if (field.type === 'file' || field.name === 'avatar') {
+        if (bodyData[field.name]) {
+          bodyData[field.name] = saveRecordFile(col.name, id, bodyData[field.name], field);
+        }
       }
     }
+  } catch (fileErr: any) {
+    return res.status(400).json({ error: fileErr.message });
   }
 
   const fieldNames = ['id', 'created_at', 'updated_at'];
@@ -835,12 +982,27 @@ collectionsRouter.patch('/:collection/records/:id', (req: Request, res: Response
   }
 
   // Save physical files to data/files/<collection>/<recordId>/<filename>
-  for (const field of col.fields) {
-    if (field.type === 'file' || field.name === 'avatar') {
-      if (bodyData[field.name] !== undefined) {
-        bodyData[field.name] = saveRecordFile(col.name, recordId, bodyData[field.name]);
+  try {
+    for (const field of col.fields) {
+      if (field.type === 'file' || field.name === 'avatar') {
+        if (bodyData[field.name] !== undefined) {
+          const oldFile = existing[field.name];
+          const newFile = saveRecordFile(col.name, recordId, bodyData[field.name], field);
+          bodyData[field.name] = newFile;
+          // Unlink previous file if replaced
+          if (oldFile && typeof oldFile === 'string' && oldFile !== newFile) {
+            try {
+              const oldPath = path.resolve(FILES_DIR, col.name, recordId, oldFile);
+              if (oldPath.startsWith(FILES_DIR) && fs.existsSync(oldPath)) {
+                fs.unlinkSync(oldPath);
+              }
+            } catch {}
+          }
+        }
       }
     }
+  } catch (fileErr: any) {
+    return res.status(400).json({ error: fileErr.message });
   }
 
   const updates: string[] = ['"updated_at" = ?'];
@@ -921,6 +1083,29 @@ collectionsRouter.delete('/:collection/records/:id', (req: Request, res: Respons
 
   const isAuth = col.type === 'auth' || col.name === 'users' || col.name === '_superusers';
   const formattedExisting = formatRecordOutput(col.fields, existing, auth, isAuth);
+
+  // Cascade delete dependent records if any collection has a relation field with cascadeDelete: true
+  try {
+    const allCols = listCollections();
+    for (const otherCol of allCols) {
+      for (const field of otherCol.fields || []) {
+        if (
+          (field.type === 'relation' || Boolean(field.relationCollection)) &&
+          field.relationCollection === col.name &&
+          field.cascadeDelete
+        ) {
+          const targetColName = field.relationField ? sanitizeIdentifier(field.relationField) : 'id';
+          const refVal = (existing as any)[targetColName];
+          if (refVal !== undefined && refVal !== null) {
+            db.prepare(`DELETE FROM "${otherCol.name}" WHERE "${sanitizeIdentifier(field.name)}" = ?`).run(String(refVal));
+          }
+        }
+      }
+    }
+  } catch (cascadeErr) {
+    console.warn('[Cascade Delete Warning]', cascadeErr);
+  }
+
   db.prepare(`DELETE FROM "${col.name}" WHERE id = ?`).run(recordId);
   deleteRecordFiles(col.name, recordId);
   broadcastRecordEvent('delete', col.name, formattedExisting || { id: recordId });
@@ -1002,67 +1187,60 @@ collectionsRouter.post('/:collection/auth-with-oauth2', async (req: Request, res
   if (col.type !== 'auth' && col.name !== 'users') {
     return res.status(400).json({ error: `Collection '${collectionName}' is not an auth collection` });
   }
+  if (!col.options?.allowOAuth2Auth) {
+    return res.status(403).json({ error: 'OAuth2 authentication is not enabled for this collection' });
+  }
 
-  const { provider, code, token: clientToken, createData } = req.body;
+  const { provider, token: clientToken, createData } = req.body;
   if (!provider) {
     return res.status(400).json({ error: 'OAuth2 provider name is required' });
   }
+  if (!clientToken || typeof clientToken !== 'string') {
+    return res.status(400).json({ error: 'Valid OAuth2 provider access token is required' });
+  }
 
-  // Resolve user info from code, client token, or payload
+  // Resolve user info from verified provider token
   let oauthUser: { id?: string; email: string; name?: string; avatarUrl?: string; raw?: any } | null = null;
 
   try {
-    if (clientToken && typeof clientToken === 'string') {
-      // Exchange token with provider APIs
-      if (provider === 'google') {
-        const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${clientToken}` }
-        });
-        if (resp.ok) {
-          const info: any = await resp.json();
-          oauthUser = { id: info.sub, email: info.email, name: info.name, avatarUrl: info.picture, raw: info };
-        }
-      } else if (provider === 'github') {
-        const resp = await fetch('https://api.github.com/user', {
-          headers: { Authorization: `Bearer ${clientToken}`, 'User-Agent': 'AlsaBase' }
-        });
-        if (resp.ok) {
-          const info: any = await resp.json();
-          let email = info.email;
-          if (!email) {
-            const emailResp = await fetch('https://api.github.com/user/emails', {
-              headers: { Authorization: `Bearer ${clientToken}`, 'User-Agent': 'AlsaBase' }
-            });
-            if (emailResp.ok) {
-              const emails: any = await emailResp.json();
-              const primary = emails.find((e: any) => e.primary && e.verified) || emails[0];
-              if (primary) email = primary.email;
-            }
-          }
-          oauthUser = { id: String(info.id), email: email || `${info.login}@github.oauth`, name: info.name || info.login, avatarUrl: info.avatar_url, raw: info };
-        }
-      } else if (provider === 'discord') {
-        const resp = await fetch('https://discord.com/api/users/@me', {
-          headers: { Authorization: `Bearer ${clientToken}` }
-        });
-        if (resp.ok) {
-          const info: any = await resp.json();
-          oauthUser = { id: info.id, email: info.email || `${info.username}@discord.oauth`, name: info.global_name || info.username, avatarUrl: info.avatar ? `https://cdn.discordapp.com/avatars/${info.id}/${info.avatar}.png` : undefined, raw: info };
-        }
+    // Exchange token with provider APIs
+    if (provider === 'google') {
+      const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${clientToken}` }
+      });
+      if (resp.ok) {
+        const info: any = await resp.json();
+        oauthUser = { id: info.sub, email: info.email, name: info.name, avatarUrl: info.picture, raw: info };
       }
-    }
-
-    // Fallback: parse direct user profile from body if passed by SDK or mock
-    if (!oauthUser) {
-      const email = req.body.email || req.body.user?.email || `${provider}_${code || crypto.randomUUID().slice(0, 8)}@${provider}.oauth`;
-      const name = req.body.name || req.body.user?.name || `${provider}_user`;
-      oauthUser = {
-        id: req.body.id || req.body.user?.id || crypto.randomUUID(),
-        email: email.trim().toLowerCase(),
-        name,
-        avatarUrl: req.body.avatarUrl || req.body.avatar,
-        raw: req.body
-      };
+    } else if (provider === 'github') {
+      const resp = await fetch('https://api.github.com/user', {
+        headers: { Authorization: `Bearer ${clientToken}`, 'User-Agent': 'AlsaBase' }
+      });
+      if (resp.ok) {
+        const info: any = await resp.json();
+        let email = info.email;
+        if (!email) {
+          const emailResp = await fetch('https://api.github.com/user/emails', {
+            headers: { Authorization: `Bearer ${clientToken}`, 'User-Agent': 'AlsaBase' }
+          });
+          if (emailResp.ok) {
+            const emails: any = await emailResp.json();
+            const primary = emails.find((e: any) => e.primary && e.verified) || emails[0];
+            if (primary) email = primary.email;
+          }
+        }
+        oauthUser = { id: String(info.id), email: email || `${info.login}@github.oauth`, name: info.name || info.login, avatarUrl: info.avatar_url, raw: info };
+      }
+    } else if (provider === 'discord') {
+      const resp = await fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: `Bearer ${clientToken}` }
+      });
+      if (resp.ok) {
+        const info: any = await resp.json();
+        oauthUser = { id: info.id, email: info.email || `${info.username}@discord.oauth`, name: info.global_name || info.username, avatarUrl: info.avatar ? `https://cdn.discordapp.com/avatars/${info.id}/${info.avatar}.png` : undefined, raw: info };
+      }
+    } else {
+      return res.status(400).json({ error: `Unsupported OAuth2 provider '${provider}'` });
     }
   } catch (err: any) {
     return res.status(400).json({ error: `Failed to exchange OAuth2 token: ${err.message}` });
@@ -1271,25 +1449,38 @@ collectionsRouter.post(['/:collection/auth-with-mfa', '/:collection/auth-with-ot
   const col = getCollection(collectionName);
   if (!col) return res.status(404).json({ error: 'Collection not found' });
 
-  const { mfaId, otp, email } = req.body;
-  if (!otp) {
+  const { mfaId, otpId, otp, password, email } = req.body;
+  const resolvedId = mfaId || otpId;
+  const resolvedOtp = otp || password;
+  if (!resolvedOtp) {
     return res.status(400).json({ error: 'Verification code (otp) is required' });
   }
 
-  const cleanOtp = String(otp).trim();
+  const cleanOtp = String(resolvedOtp).trim();
   const now = new Date().toISOString();
+  const attemptKey = resolvedId ? `mfa:${resolvedId}` : `otp:${String(email || '').trim().toLowerCase()}`;
 
   let authRow: any = null;
-  if (mfaId) {
-    authRow = db.prepare("SELECT * FROM _auth_tokens WHERE id = ? AND token = ? AND expires_at > ?").get(mfaId, cleanOtp, now) as any;
+  if (resolvedId) {
+    authRow = db.prepare("SELECT * FROM _auth_tokens WHERE id = ? AND token = ? AND expires_at > ?").get(resolvedId, cleanOtp, now) as any;
   }
   if (!authRow && email) {
     authRow = db.prepare("SELECT * FROM _auth_tokens WHERE email = ? AND token = ? AND expires_at > ?").get(email.trim().toLowerCase(), cleanOtp, now) as any;
   }
 
   if (!authRow) {
+    if (recordFailedOtpAttempt(attemptKey)) {
+      if (resolvedId) {
+        db.prepare("DELETE FROM _auth_tokens WHERE id = ?").run(resolvedId);
+      } else if (email) {
+        db.prepare("DELETE FROM _auth_tokens WHERE email = ? AND type IN ('mfa', 'otp')").run(email.trim().toLowerCase());
+      }
+      return res.status(429).json({ error: 'Too many failed verification attempts. Please request a new code.' });
+    }
     return res.status(400).json({ error: 'Invalid or expired verification code' });
   }
+
+  clearFailedOtpAttempts(attemptKey);
 
   const record = db.prepare(`SELECT * FROM "${col.name}" WHERE id = ?`).get(authRow.user_id) as any;
   if (!record) {
@@ -1315,8 +1506,8 @@ collectionsRouter.post(['/:collection/auth-with-mfa', '/:collection/auth-with-ot
   });
 });
 
-// 5. Request / Resend MFA OTP Code
-collectionsRouter.post('/:collection/request-mfa-otp', async (req: Request, res: Response) => {
+// 5. Request / Resend MFA or OTP Code
+collectionsRouter.post(['/:collection/request-mfa-otp', '/:collection/request-otp'], async (req: Request, res: Response) => {
   const collectionName = getParam(req.params.collection);
   const col = getCollection(collectionName);
   if (!col) return res.status(404).json({ error: 'Collection not found' });
@@ -1364,10 +1555,28 @@ collectionsRouter.post('/:collection/request-mfa-otp', async (req: Request, res:
   } catch {}
 
   return res.json({
+    otpId: newMfaId,
     mfaId: newMfaId,
     message: 'Verification code sent to your email.'
   });
 });
+
+// Forward collection-scoped password reset, verification, and email change routes to authRouter
+collectionsRouter.post(
+  [
+    '/:collection/request-password-reset',
+    '/:collection/confirm-password-reset',
+    '/:collection/request-verification',
+    '/:collection/confirm-verification',
+    '/:collection/request-email-change',
+    '/:collection/confirm-email-change',
+  ],
+  (req: Request, res: Response, next) => {
+    const action = req.path.split('/').pop();
+    req.url = `/${action}`;
+    return authRouter(req, res, next);
+  }
+);
 
 // 6. Refresh auth token
 collectionsRouter.post('/:collection/auth-refresh', requireAuth, (req: Request, res: Response) => {

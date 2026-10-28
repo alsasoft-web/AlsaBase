@@ -184,11 +184,14 @@ export class RecordService<T = any> extends BaseService {
     password: string,
     options?: CommonOptions
   ): Promise<AuthResponse<T>> {
-    const res = await this.send<any>("/api/auth/users/login", {
-      method: "POST",
-      body: { identity, password },
-      ...options,
-    });
+    const res = await this.send<any>(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/auth-with-password`,
+      {
+        method: "POST",
+        body: { identity, password },
+        ...options,
+      }
+    );
 
     const authResponse: AuthResponse<T> = {
       token: res.token,
@@ -208,11 +211,14 @@ export class RecordService<T = any> extends BaseService {
     email: string,
     options?: CommonOptions
   ): Promise<AuthResponse<T>> {
-    const res = await this.send<any>("/api/auth/verify-otp", {
-      method: "POST",
-      body: { otp, email },
-      ...options,
-    });
+    const res = await this.send<any>(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/auth-with-otp`,
+      {
+        method: "POST",
+        body: { otp, email },
+        ...options,
+      }
+    );
 
     const authResponse: AuthResponse<T> = {
       token: res.token,
@@ -228,29 +234,36 @@ export class RecordService<T = any> extends BaseService {
    * Sends an OTP verification email to the user
    */
   async requestOTP(email: string, options?: CommonOptions): Promise<any> {
-    return this.send("/api/auth/request-otp", {
-      method: "POST",
-      body: { email },
-      ...options,
-    });
+    return this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/request-otp`,
+      {
+        method: "POST",
+        body: { email },
+        ...options,
+      }
+    );
   }
 
   /**
    * Refreshes the currently authenticated record token and profile
    */
   async authRefresh(options?: CommonOptions): Promise<AuthResponse<T>> {
-    const user = await this.send<any>("/api/auth/users/me", {
-      method: "GET",
-      ...options,
-    });
+    const res = await this.send<any>(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/auth-refresh`,
+      {
+        method: "POST",
+        ...options,
+      }
+    );
 
-    const token = this.client.authStore.token;
+    const token = res.token || this.client.authStore.token;
+    const record = (res.record || res.user || res) as T;
     const authResponse: AuthResponse<T> = {
       token,
-      record: user as T,
+      record,
     };
 
-    this.client.authStore.save(token, user as any);
+    this.client.authStore.save(token, record as any);
     return authResponse;
   }
 
@@ -261,11 +274,14 @@ export class RecordService<T = any> extends BaseService {
     email: string,
     options?: CommonOptions
   ): Promise<boolean> {
-    await this.send("/api/auth/request-password-reset", {
-      method: "POST",
-      body: { email },
-      ...options,
-    });
+    await this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/request-password-reset`,
+      {
+        method: "POST",
+        body: { email },
+        ...options,
+      }
+    );
     return true;
   }
 
@@ -278,11 +294,14 @@ export class RecordService<T = any> extends BaseService {
     _passwordConfirm?: string,
     options?: CommonOptions
   ): Promise<boolean> {
-    await this.send("/api/auth/confirm-password-reset", {
-      method: "POST",
-      body: { token, password },
-      ...options,
-    });
+    await this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/confirm-password-reset`,
+      {
+        method: "POST",
+        body: { token, password },
+        ...options,
+      }
+    );
     return true;
   }
 
@@ -293,11 +312,14 @@ export class RecordService<T = any> extends BaseService {
     email: string,
     options?: CommonOptions
   ): Promise<boolean> {
-    await this.send("/api/auth/request-verification", {
-      method: "POST",
-      body: { email },
-      ...options,
-    });
+    await this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/request-verification`,
+      {
+        method: "POST",
+        body: { email },
+        ...options,
+      }
+    );
     return true;
   }
 
@@ -308,11 +330,14 @@ export class RecordService<T = any> extends BaseService {
     token: string,
     options?: CommonOptions
   ): Promise<boolean> {
-    await this.send("/api/auth/confirm-verification", {
-      method: "POST",
-      body: { token },
-      ...options,
-    });
+    await this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/confirm-verification`,
+      {
+        method: "POST",
+        body: { token },
+        ...options,
+      }
+    );
     return true;
   }
 
@@ -323,11 +348,14 @@ export class RecordService<T = any> extends BaseService {
     newEmail: string,
     options?: CommonOptions
   ): Promise<boolean> {
-    await this.send("/api/auth/request-email-change", {
-      method: "POST",
-      body: { newEmail },
-      ...options,
-    });
+    await this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/request-email-change`,
+      {
+        method: "POST",
+        body: { newEmail },
+        ...options,
+      }
+    );
     return true;
   }
 
@@ -339,11 +367,14 @@ export class RecordService<T = any> extends BaseService {
     password?: string,
     options?: CommonOptions
   ): Promise<boolean> {
-    await this.send("/api/auth/confirm-email-change", {
-      method: "POST",
-      body: { token, password },
-      ...options,
-    });
+    await this.send(
+      `/api/collections/${encodeURIComponent(this.collectionIdOrName)}/confirm-email-change`,
+      {
+        method: "POST",
+        body: { token, password },
+        ...options,
+      }
+    );
     return true;
   }
 

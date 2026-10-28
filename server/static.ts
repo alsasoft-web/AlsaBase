@@ -1,7 +1,14 @@
 import express, { Request, Response, NextFunction } from "express";
 import fs from "node:fs";
 import path from "node:path";
-import { safeMoveSync } from "./files";
+import { requireSuperuser } from "./auth";
+import {
+  safeMoveSync,
+  listFilesRecursive,
+  listDirectoryEntries,
+  searchDirectoryEntries,
+  moveToTrashSync,
+} from "./files";
 
 const PUBLIC_DIR =
   process.env.PUBLIC_DIR || path.resolve(process.cwd(), "_public");
@@ -156,6 +163,7 @@ export function staticHostingMiddleware() {
 }
 
 export const staticRouter = express.Router();
+staticRouter.use(requireSuperuser);
 
 function resolvePublicPath(relPath: string): string {
   const cleanPath = relPath.replace(/^[\/\\]+/, "");
@@ -192,90 +200,13 @@ staticRouter.get(["/raw", /^\/raw\/(.+)$/], (req: Request, res: Response) => {
   }
 });
 
-function getAllFilesRecursively(
-  dir: string,
-  baseDir = dir,
-): { name: string; sizeBytes: number; updatedAt: string }[] {
-  let results: { name: string; sizeBytes: number; updatedAt: string }[] = [];
-  if (!fs.existsSync(dir)) return results;
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results = results.concat(getAllFilesRecursively(fullPath, baseDir));
-    } else if (entry.isFile()) {
-      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
-      const stats = fs.statSync(fullPath);
-      results.push({
-        name: relPath,
-        sizeBytes: stats.size,
-        updatedAt: stats.mtime.toISOString(),
-      });
-    }
-  }
-  return results;
-}
-
 // On-demand single directory listing (instant <1ms even with 100k files)
 staticRouter.get("/tree", (req: Request, res: Response) => {
   initPublicDir();
   try {
     const relDir = ((req.query.dir as string) || "").replace(/^[\\\/]+/, "");
     const targetDir = relDir ? resolvePublicPath(relDir) : PUBLIC_DIR;
-
-    if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
-      return res.json({ items: [], dir: relDir, total: 0 });
-    }
-
-    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
-    const items: {
-      name: string;
-      fullPath: string;
-      isFolder: boolean;
-      sizeBytes?: number;
-      updatedAt?: string;
-    }[] = [];
-
-    for (const entry of entries) {
-      if (
-        entry.name === ".git" ||
-        entry.name === ".trash" ||
-        entry.name === "node_modules"
-      )
-        continue;
-      const fullEntryPath = path.join(targetDir, entry.name);
-      const entryRelPath = path
-        .relative(PUBLIC_DIR, fullEntryPath)
-        .replace(/\\/g, "/");
-
-      if (entry.isDirectory()) {
-        items.push({
-          name: entry.name,
-          fullPath: entryRelPath,
-          isFolder: true,
-        });
-      } else if (entry.isFile()) {
-        const stats = fs.statSync(fullEntryPath);
-        items.push({
-          name: entry.name,
-          fullPath: entryRelPath,
-          isFolder: false,
-          sizeBytes: stats.size,
-          updatedAt: stats.mtime.toISOString(),
-        });
-      }
-    }
-
-    // Folders first, then index.html, then alphabetical
-    items.sort((a, b) => {
-      if (a.isFolder && !b.isFolder) return -1;
-      if (!a.isFolder && b.isFolder) return 1;
-      if (a.name === "index.html") return -1;
-      if (b.name === "index.html") return 1;
-      return a.name.localeCompare(b.name);
-    });
-
+    const items = listDirectoryEntries(targetDir, PUBLIC_DIR, true);
     res.json({ items, dir: relDir, total: items.length });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -286,48 +217,8 @@ staticRouter.get("/tree", (req: Request, res: Response) => {
 staticRouter.get("/search", (req: Request, res: Response) => {
   initPublicDir();
   try {
-    const q = ((req.query.q as string) || "").trim().toLowerCase();
-    if (!q) return res.json({ items: [], total: 0 });
-
-    const matches: {
-      name: string;
-      sizeBytes: number;
-      updatedAt: string;
-    }[] = [];
-
-    const searchRecursive = (dir: string, baseDir = dir) => {
-      if (matches.length >= 100) return;
-      if (!fs.existsSync(dir)) return;
-
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (matches.length >= 100) break;
-        if (
-          entry.name === ".git" ||
-          entry.name === ".trash" ||
-          entry.name === "node_modules"
-        )
-          continue;
-
-        const fullPath = path.join(dir, entry.name);
-        const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
-
-        if (entry.name.toLowerCase().includes(q)) {
-          const stats = fs.statSync(fullPath);
-          matches.push({
-            name: relPath,
-            sizeBytes: entry.isFile() ? stats.size : 0,
-            updatedAt: stats.mtime.toISOString(),
-          });
-        }
-
-        if (entry.isDirectory()) {
-          searchRecursive(fullPath, baseDir);
-        }
-      }
-    };
-
-    searchRecursive(PUBLIC_DIR, PUBLIC_DIR);
+    const q = ((req.query.q as string) || "").trim();
+    const matches = searchDirectoryEntries(PUBLIC_DIR, q, 100);
     res.json({ items: matches, total: matches.length });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -371,7 +262,7 @@ staticRouter.get("/", (req: Request, res: Response) => {
       return res.json({ items, total: items.length, publicDir: PUBLIC_DIR });
     }
 
-    const files = getAllFilesRecursively(PUBLIC_DIR);
+    const files = listFilesRecursive(PUBLIC_DIR);
     // Sort files alphabetically with index.html at top
     files.sort((a, b) => {
       if (a.name === "index.html") return -1;
@@ -611,14 +502,7 @@ staticRouter.delete(["/folder", "/directory"], (req: Request, res: Response) => 
       return res.status(404).json({ error: `Folder "${rawPath}" not found` });
     }
 
-    const trashDir = path.resolve(process.cwd(), ".trash");
-    if (!fs.existsSync(trashDir)) {
-      fs.mkdirSync(trashDir, { recursive: true });
-    }
-
-    const safeClean = rawPath.replace(/[\/\\]/g, "_");
-    const trashTarget = path.join(trashDir, `${Date.now()}_public_dir_${safeClean}`);
-    safeMoveSync(dirPath, trashTarget);
+    moveToTrashSync(dirPath, "public_dir", rawPath);
 
     res.json({ success: true, message: `Moved folder ${rawPath} to .trash` });
   } catch (err: any) {
@@ -643,14 +527,7 @@ staticRouter.delete(["/file", /^\/file\/(.+)$/], (req: Request, res: Response) =
       return res.status(404).json({ error: `File "${filename}" not found` });
     }
 
-    const trashDir = path.resolve(process.cwd(), ".trash");
-    if (!fs.existsSync(trashDir)) {
-      fs.mkdirSync(trashDir, { recursive: true });
-    }
-
-    const safeClean = filename.replace(/[\/\\]/g, "_");
-    const trashTarget = path.join(trashDir, `${Date.now()}_public_${safeClean}`);
-    safeMoveSync(filePath, trashTarget);
+    moveToTrashSync(filePath, "public", filename);
 
     res.json({ success: true, message: `Moved ${filename} to .trash` });
   } catch (err: any) {

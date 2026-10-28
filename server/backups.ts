@@ -3,7 +3,8 @@ import path from "node:path";
 import { ZipArchive } from "archiver";
 import AdmZip from "adm-zip";
 import cron, { ScheduledTask } from "node-cron";
-import { db, reopenDatabase } from "./db";
+import { db, reopenDatabase, DB_PATH } from "./db";
+import { FILES_DIR } from "./files";
 import { getAllSettings } from "./settings";
 import { loadAllHooks, initHooksDir } from "./hooks";
 import { initPublicDir } from "./static";
@@ -11,7 +12,7 @@ import { initDefaultCollections, syncDatabaseCollections } from "./schema";
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
 export const BACKUPS_DIR = path.resolve(DATA_DIR, "backups");
-const DB_FILE = path.join(DATA_DIR, "alsabase.sqlite");
+const DB_FILE = DB_PATH;
 const PUBLIC_DIR = path.resolve(process.cwd(), "_public");
 const HOOKS_DIR = path.resolve(process.cwd(), "_hooks");
 
@@ -116,9 +117,12 @@ export async function createBackup(options: {
     if (fs.existsSync(walFile)) archive.file(walFile, { name: "data/alsabase.sqlite-wal" });
     if (fs.existsSync(shmFile)) archive.file(shmFile, { name: "data/alsabase.sqlite-shm" });
 
-    // 4. Add data/uploads directory if exists
+    // 4. Add data/files and legacy data/uploads directory if exists
+    if (fs.existsSync(FILES_DIR)) {
+      archive.directory(FILES_DIR, "data/files");
+    }
     const uploadsDir = path.join(DATA_DIR, "uploads");
-    if (fs.existsSync(uploadsDir)) {
+    if (fs.existsSync(uploadsDir) && uploadsDir !== FILES_DIR) {
       archive.directory(uploadsDir, "data/uploads");
     }
 
@@ -136,6 +140,9 @@ export async function createBackup(options: {
   });
 }
 
+// Cache manifest reads to prevent reading and parsing all zip archives on every request
+const manifestCache = new Map<string, { mtimeMs: number; includePublic: boolean; includeHooks: boolean }>();
+
 // List all existing backups
 export function listBackups(): BackupItemMeta[] {
   initBackupsDir();
@@ -151,17 +158,24 @@ export function listBackups(): BackupItemMeta[] {
       let includePublic = true;
       let includeHooks = true;
 
-      // Try quick manifest read
-      try {
-        const zip = new AdmZip(fullPath);
-        const manifestEntry = zip.getEntry("backup_manifest.json");
-        if (manifestEntry) {
-          const manifest = JSON.parse(manifestEntry.getData().toString("utf8"));
-          if (manifest.includePublic !== undefined) includePublic = manifest.includePublic;
-          if (manifest.includeHooks !== undefined) includeHooks = manifest.includeHooks;
+      const cached = manifestCache.get(entry.name);
+      if (cached && cached.mtimeMs === stats.mtimeMs) {
+        includePublic = cached.includePublic;
+        includeHooks = cached.includeHooks;
+      } else {
+        // Try quick manifest read
+        try {
+          const zip = new AdmZip(fullPath);
+          const manifestEntry = zip.getEntry("backup_manifest.json");
+          if (manifestEntry) {
+            const manifest = JSON.parse(manifestEntry.getData().toString("utf8"));
+            if (manifest.includePublic !== undefined) includePublic = manifest.includePublic;
+            if (manifest.includeHooks !== undefined) includeHooks = manifest.includeHooks;
+          }
+          manifestCache.set(entry.name, { mtimeMs: stats.mtimeMs, includePublic, includeHooks });
+        } catch {
+          // ignore zip parse error
         }
-      } catch {
-        // ignore zip parse error
       }
 
       backups.push({
@@ -218,23 +232,32 @@ export async function restoreBackup(filename: string): Promise<{ success: boolea
     try { fs.unlinkSync(DB_FILE + "-shm"); } catch {}
   }
 
+  function safeResolve(baseDir: string, rel: string): string {
+    const clean = rel.replace(/^[\/\\]+/, "");
+    const target = path.resolve(baseDir, clean);
+    if (!target.startsWith(baseDir + path.sep) && target !== baseDir) {
+      throw new Error(`Zip traversal attempt detected in entry: ${rel}`);
+    }
+    return target;
+  }
+
   // Extract contents
   for (const entry of zipEntries) {
     if (entry.isDirectory) continue;
 
     if (entry.entryName.startsWith("data/")) {
       const rel = entry.entryName.slice("data/".length);
-      const target = path.join(DATA_DIR, rel);
+      const target = safeResolve(DATA_DIR, rel);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, entry.getData());
     } else if (entry.entryName.startsWith("_public/")) {
       const rel = entry.entryName.slice("_public/".length);
-      const target = path.join(PUBLIC_DIR, rel);
+      const target = safeResolve(PUBLIC_DIR, rel);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, entry.getData());
     } else if (entry.entryName.startsWith("_hooks/")) {
       const rel = entry.entryName.slice("_hooks/".length);
-      const target = path.join(HOOKS_DIR, rel);
+      const target = safeResolve(HOOKS_DIR, rel);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, entry.getData());
     }
@@ -266,6 +289,7 @@ export function deleteBackup(filename: string): { success: boolean } {
   }
 
   fs.unlinkSync(zipPath);
+  manifestCache.delete(cleanName);
 
   return { success: true };
 }

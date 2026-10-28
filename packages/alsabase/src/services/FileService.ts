@@ -30,16 +30,16 @@ export class FileService extends BaseService {
       const col = record.collectionName || record.collectionId || "";
       const id = record.id || "";
       if (col && id) {
-        fileUrlPath = `/api/static-files/file/${encodeURIComponent(col)}/${encodeURIComponent(id)}/${encodeURIComponent(filename)}`;
+        fileUrlPath = `/api/files/${encodeURIComponent(col)}/${encodeURIComponent(id)}/${encodeURIComponent(filename)}`;
       } else if (id) {
-        fileUrlPath = `/api/static-files/file/${encodeURIComponent(id)}/${encodeURIComponent(filename)}`;
+        fileUrlPath = `/api/files/${encodeURIComponent(id)}/${encodeURIComponent(filename)}`;
       } else {
-        fileUrlPath = `/api/static-files/file/${encodeURIComponent(filename)}`;
+        fileUrlPath = `/api/files/${encodeURIComponent(filename)}`;
       }
     } else if (typeof record === "string" && record) {
-      fileUrlPath = `/api/static-files/file/${encodeURIComponent(record)}/${encodeURIComponent(filename)}`;
+      fileUrlPath = `/api/files/${encodeURIComponent(record)}/${encodeURIComponent(filename)}`;
     } else {
-      fileUrlPath = `/api/static-files/file/${encodeURIComponent(filename)}`;
+      fileUrlPath = `/api/files/${encodeURIComponent(filename)}`;
     }
 
     return this.client.buildUrl(fileUrlPath, queryParams);

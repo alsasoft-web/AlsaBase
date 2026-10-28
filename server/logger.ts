@@ -27,8 +27,8 @@ export function logToDb(entry: Omit<LogEntry, "id" | "timestamp">) {
 
     // Ensure metadata is safely bounded to prevent string length overflows
     let safeMetadata = entry.metadata_json || null;
-    if (safeMetadata && safeMetadata.length > 2000) {
-      safeMetadata = safeMetadata.substring(0, 2000) + '... [truncated]"}';
+    if (safeMetadata && safeMetadata.length > 3000) {
+      try { const p = JSON.parse(safeMetadata); if (p.body) p.body = '[Truncated Body]'; safeMetadata = JSON.stringify(p); } catch { safeMetadata = JSON.stringify({ truncated: true }); }
     }
 
     stmt.run(

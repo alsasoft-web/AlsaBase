@@ -3,9 +3,6 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install build tools required for native C++ modules
-RUN apk add --no-cache python3 make g++
-
 # Copy package descriptors
 COPY package*.json ./
 COPY packages/alsabase/package*.json ./packages/alsabase/
@@ -24,9 +21,6 @@ RUN npm run build --prefix packages/alsabase
 FROM node:22-alpine AS runner
 
 WORKDIR /app
-
-# Install native runtime libraries for SQLite
-RUN apk add --no-cache python3 make g++
 
 ENV NODE_ENV=production
 ENV PORT=8090

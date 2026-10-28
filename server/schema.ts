@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { db } from './db';
 
 export type FieldType =
@@ -36,6 +38,8 @@ export interface FieldDef {
   protected?: boolean;
   values?: string[];
   relationCollection?: string;
+  relationField?: string;
+  cascadeDelete?: boolean;
   onCreate?: boolean;
   onUpdate?: boolean;
 }
@@ -830,5 +834,12 @@ export function deleteCollection(idOrName: string): boolean {
 
   db.exec(`DROP TABLE IF EXISTS "${current.name}";`);
   db.prepare('DELETE FROM _collections WHERE id = ?').run(current.id);
+  try {
+    const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
+    const filesDir = path.resolve(dataDir, 'files', current.name);
+    if (filesDir.startsWith(path.resolve(dataDir, 'files')) && fs.existsSync(filesDir)) {
+      fs.rmSync(filesDir, { recursive: true, force: true });
+    }
+  } catch {}
   return true;
 }

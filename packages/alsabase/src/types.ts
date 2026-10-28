@@ -105,6 +105,8 @@ export interface FieldDef {
   protected?: boolean;
   values?: string[];
   relationCollection?: string;
+  relationField?: string;
+  cascadeDelete?: boolean;
   onCreate?: boolean;
   onUpdate?: boolean;
   options?: Record<string, any>;

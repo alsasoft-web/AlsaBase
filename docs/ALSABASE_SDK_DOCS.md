@@ -339,6 +339,7 @@ const collection = await ab.collections.create({
     { name: "price", type: "number", required: true },
     { name: "in_stock", type: "bool", defaultValue: true },
     { name: "sku", type: "text", unique: true },
+    { name: "author", type: "relation", relationCollection: "users", relationField: "id", maxSelect: 1, cascadeDelete: false },
     { name: "tags", type: "json" },
     { name: "photos", type: "file", options: { maxSelect: 5 } },
   ],

@@ -311,7 +311,13 @@ export function rateLimitMiddleware(req: Request, res: Response, next: NextFunct
     const label = rule.label.trim();
 
     if (label === "*:auth") {
-      matches = fullPath.startsWith("/api/auth") || fullPath.includes("/auth-with-password") || fullPath.includes("/request-password-reset") || fullPath.includes("/request-otp");
+      matches =
+        fullPath.startsWith("/api/auth") ||
+        fullPath.includes("/auth-with-") ||
+        fullPath.includes("/request-password-reset") ||
+        fullPath.includes("/confirm-password-reset") ||
+        fullPath.includes("/request-otp") ||
+        fullPath.includes("/request-mfa-otp");
     } else if (label === "*:create") {
       matches = method === "POST" && (fullPath.includes("/records") || fullPath === "/api/collections");
     } else if (label.startsWith("/")) {

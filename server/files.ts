@@ -4,6 +4,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { FieldDef, getCollection } from './schema';
 import { AuthPayload } from './auth';
+import { db } from './db';
+import { evaluateRule } from './crud';
 
 const DATA_DIR = process.env.DATA_DIR || path.resolve(process.cwd(), 'data');
 export const FILES_DIR = path.join(DATA_DIR, 'files');
@@ -39,12 +41,153 @@ export const MIME_TYPES: Record<string, string> = {
   '.gz': 'application/gzip'
 };
 
-function checkPermission(rule: string | undefined | null, auth?: AuthPayload): boolean {
+function canViewProtectedFile(col: any, recordId: string, auth?: AuthPayload): boolean {
   if (auth && auth.isSuperuser) return true;
-  if (!rule || rule === 'public' || rule === '') return true;
-  if (rule === 'admin') return !!(auth && auth.isSuperuser);
-  if (rule === 'auth' || typeof rule === 'string') return !!auth;
-  return false;
+  let row: any;
+  try {
+    row = db.prepare(`SELECT * FROM "${col.name}" WHERE id = ?`).get(recordId);
+  } catch {}
+  return evaluateRule(col.rules?.view, auth, row);
+}
+
+export interface FileBrowserItem {
+  name: string;
+  fullPath?: string;
+  isFolder?: boolean;
+  sizeBytes: number;
+  updatedAt: string;
+}
+
+export function listFilesRecursive(
+  dir: string,
+  baseDir = dir,
+  excludeHidden = false
+): { name: string; sizeBytes: number; updatedAt: string }[] {
+  let results: { name: string; sizeBytes: number; updatedAt: string }[] = [];
+  if (!fs.existsSync(dir)) return results;
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (
+      entry.name === '.git' ||
+      entry.name === 'node_modules' ||
+      entry.name === '.trash' ||
+      (excludeHidden && entry.name.startsWith('.'))
+    ) {
+      continue;
+    }
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results = results.concat(listFilesRecursive(fullPath, baseDir, excludeHidden));
+    } else if (entry.isFile()) {
+      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+      const stats = fs.statSync(fullPath);
+      results.push({
+        name: relPath,
+        sizeBytes: stats.size,
+        updatedAt: stats.mtime.toISOString()
+      });
+    }
+  }
+  return results;
+}
+
+export function listDirectoryEntries(
+  targetDir: string,
+  baseDir: string,
+  prioritizeIndexHtml = false
+) {
+  if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+    return [];
+  }
+  const entries = fs.readdirSync(targetDir, { withFileTypes: true });
+  const items: {
+    name: string;
+    fullPath: string;
+    isFolder: boolean;
+    sizeBytes?: number;
+    updatedAt?: string;
+  }[] = [];
+
+  for (const entry of entries) {
+    if (entry.name === '.git' || entry.name === '.trash' || entry.name === 'node_modules') {
+      continue;
+    }
+    const fullEntryPath = path.join(targetDir, entry.name);
+    const entryRelPath = path.relative(baseDir, fullEntryPath).replace(/\\/g, '/');
+
+    if (entry.isDirectory()) {
+      items.push({
+        name: entry.name,
+        fullPath: entryRelPath,
+        isFolder: true
+      });
+    } else if (entry.isFile()) {
+      const stats = fs.statSync(fullEntryPath);
+      items.push({
+        name: entry.name,
+        fullPath: entryRelPath,
+        isFolder: false,
+        sizeBytes: stats.size,
+        updatedAt: stats.mtime.toISOString()
+      });
+    }
+  }
+
+  items.sort((a, b) => {
+    if (a.isFolder && !b.isFolder) return -1;
+    if (!a.isFolder && b.isFolder) return 1;
+    if (prioritizeIndexHtml) {
+      if (a.name === 'index.html') return -1;
+      if (b.name === 'index.html') return 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  return items;
+}
+
+export function searchDirectoryEntries(baseDir: string, query: string, limit = 100) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const matches: { name: string; sizeBytes: number; updatedAt: string }[] = [];
+
+  const searchRecursive = (dir: string) => {
+    if (matches.length >= limit || !fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (matches.length >= limit) break;
+      if (entry.name === '.git' || entry.name === '.trash' || entry.name === 'node_modules') {
+        continue;
+      }
+      const fullPath = path.join(dir, entry.name);
+      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+      if (entry.name.toLowerCase().includes(q)) {
+        const stats = fs.statSync(fullPath);
+        matches.push({
+          name: relPath,
+          sizeBytes: entry.isFile() ? stats.size : 0,
+          updatedAt: stats.mtime.toISOString()
+        });
+      }
+      if (entry.isDirectory()) {
+        searchRecursive(fullPath);
+      }
+    }
+  };
+
+  searchRecursive(baseDir);
+  return matches;
+}
+
+export function moveToTrashSync(srcPath: string, prefix: string, rawRelPath: string) {
+  const trashDir = path.resolve(process.cwd(), '.trash');
+  if (!fs.existsSync(trashDir)) {
+    fs.mkdirSync(trashDir, { recursive: true });
+  }
+  const safeClean = rawRelPath.replace(/[\/\\]/g, '_');
+  const trashTarget = path.join(trashDir, `${Date.now()}_${prefix}_${safeClean}`);
+  safeMoveSync(srcPath, trashTarget);
 }
 
 /**
@@ -139,7 +282,10 @@ export function saveRecordFile(
     const uniqueSuffix = crypto.randomBytes(6).toString('hex');
     const filename = `${baseName}_${uniqueSuffix}${ext}`;
 
-    const recordDir = path.join(FILES_DIR, collectionName, recordId);
+    const recordDir = path.resolve(FILES_DIR, collectionName, recordId);
+    if (!recordDir.startsWith(FILES_DIR)) {
+      throw new Error('Invalid storage path: directory traversal attempt');
+    }
     if (!fs.existsSync(recordDir)) {
       fs.mkdirSync(recordDir, { recursive: true });
     }
@@ -158,13 +304,32 @@ export function saveRecordFile(
  */
 export function deleteRecordFiles(collectionName: string, recordId: string) {
   try {
-    const recordDir = path.join(FILES_DIR, collectionName, recordId);
+    const recordDir = path.resolve(FILES_DIR, collectionName, recordId);
+    if (!recordDir.startsWith(FILES_DIR)) return;
     if (fs.existsSync(recordDir)) {
       fs.rmSync(recordDir, { recursive: true, force: true });
     }
   } catch (err: any) {
     console.warn(
       `[Storage] Failed to delete files for ${collectionName}/${recordId}:`,
+      err.message
+    );
+  }
+}
+
+/**
+ * Delete all files for a collection when collection is deleted or truncated
+ */
+export function deleteCollectionFiles(collectionName: string) {
+  try {
+    const colDir = path.resolve(FILES_DIR, collectionName);
+    if (!colDir.startsWith(FILES_DIR)) return;
+    if (fs.existsSync(colDir)) {
+      fs.rmSync(colDir, { recursive: true, force: true });
+    }
+  } catch (err: any) {
+    console.warn(
+      `[Storage] Failed to delete collection files for ${collectionName}:`,
       err.message
     );
   }
@@ -234,7 +399,7 @@ filesRouter.get(
       );
       if (protectedField) {
         const auth = (req as any).auth as AuthPayload | undefined;
-        if (!checkPermission(col.rules.view, auth)) {
+        if (!canViewProtectedFile(col, recordId, auth)) {
           return res.status(403).json({
             error: 'Access denied: protected file requires view permissions'
           });
@@ -276,6 +441,24 @@ filesRouter.get('/:filename', (req: Request, res: Response) => {
   try {
     const found = findFile(FILES_DIR);
     if (found && fs.existsSync(found)) {
+      const relParts = path.relative(FILES_DIR, found).split(path.sep);
+      if (relParts.length >= 3) {
+        const [colName, recId] = relParts;
+        const col = getCollection(colName);
+        if (col) {
+          const protectedField = col.fields.find(
+            (f) => (f.type === 'file' || f.name === 'avatar') && f.protected
+          );
+          if (protectedField) {
+            const auth = (req as any).auth as AuthPayload | undefined;
+            if (!canViewProtectedFile(col, recId, auth)) {
+              return res.status(403).json({
+                error: 'Access denied: protected file requires view permissions'
+              });
+            }
+          }
+        }
+      }
       const ext = path.extname(found).toLowerCase();
       res.setHeader('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
       return res.sendFile(found);

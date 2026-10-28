@@ -2,7 +2,13 @@ import { Router, Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { requireSuperuser } from './auth';
-import { safeMoveSync } from './files';
+import {
+  safeMoveSync,
+  listFilesRecursive,
+  listDirectoryEntries,
+  searchDirectoryEntries,
+  moveToTrashSync
+} from './files';
 import {
   HOOKS_DIR,
   getHooksOverview,
@@ -26,39 +32,13 @@ function resolveHookPath(relPath: string): string {
   return fullPath;
 }
 
-function getAllHookFilesRecursively(
-  dir: string,
-  baseDir = dir,
-): { name: string; sizeBytes: number; updatedAt: string }[] {
-  let results: { name: string; sizeBytes: number; updatedAt: string }[] = [];
-  if (!fs.existsSync(dir)) return results;
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.trash' || entry.name.startsWith('.')) continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      results = results.concat(getAllHookFilesRecursively(fullPath, baseDir));
-    } else if (entry.isFile()) {
-      const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
-      const stats = fs.statSync(fullPath);
-      results.push({
-        name: relPath,
-        sizeBytes: stats.size,
-        updatedAt: stats.mtime.toISOString(),
-      });
-    }
-  }
-  return results;
-}
-
 // 1. Overview of all hooks, registered routes, and crons
 hooksRouter.get('/', requireSuperuser, (_req: Request, res: Response) => {
   res.json(getHooksOverview());
 });
 
 // Raw file streaming (for images, media, and binary assets)
-hooksRouter.get(['/files/raw', /^\/files\/raw\/(.+)$/], (req: Request, res: Response) => {
+hooksRouter.get(['/files/raw', /^\/files\/raw\/(.+)$/], requireSuperuser, (req: Request, res: Response) => {
   try {
     const rawParam = (req.params as any)[0];
     const rawQuery = (req.query.path as string) || (req.query.name as string);
@@ -86,56 +66,7 @@ hooksRouter.get('/tree', requireSuperuser, (req: Request, res: Response) => {
   try {
     const relDir = ((req.query.dir as string) || "").replace(/^[\\\/]+/, "");
     const targetDir = relDir ? resolveHookPath(relDir) : HOOKS_DIR;
-
-    if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
-      return res.json({ items: [], dir: relDir, total: 0 });
-    }
-
-    const entries = fs.readdirSync(targetDir, { withFileTypes: true });
-    const items: {
-      name: string;
-      fullPath: string;
-      isFolder: boolean;
-      sizeBytes?: number;
-      updatedAt?: string;
-    }[] = [];
-
-    for (const entry of entries) {
-      if (
-        entry.name === ".git" ||
-        entry.name === ".trash" ||
-        entry.name === "node_modules"
-      )
-        continue;
-      const fullEntryPath = path.join(targetDir, entry.name);
-      const entryRelPath = path
-        .relative(HOOKS_DIR, fullEntryPath)
-        .replace(/\\/g, "/");
-
-      if (entry.isDirectory()) {
-        items.push({
-          name: entry.name,
-          fullPath: entryRelPath,
-          isFolder: true,
-        });
-      } else if (entry.isFile()) {
-        const stats = fs.statSync(fullEntryPath);
-        items.push({
-          name: entry.name,
-          fullPath: entryRelPath,
-          isFolder: false,
-          sizeBytes: stats.size,
-          updatedAt: stats.mtime.toISOString(),
-        });
-      }
-    }
-
-    items.sort((a, b) => {
-      if (a.isFolder && !b.isFolder) return -1;
-      if (!a.isFolder && b.isFolder) return 1;
-      return a.name.localeCompare(b.name);
-    });
-
+    const items = listDirectoryEntries(targetDir, HOOKS_DIR, false);
     res.json({ items, dir: relDir, total: items.length });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -146,48 +77,8 @@ hooksRouter.get('/tree', requireSuperuser, (req: Request, res: Response) => {
 hooksRouter.get('/search', requireSuperuser, (req: Request, res: Response) => {
   initHooksDir();
   try {
-    const q = ((req.query.q as string) || "").trim().toLowerCase();
-    if (!q) return res.json({ items: [], total: 0 });
-
-    const matches: {
-      name: string;
-      sizeBytes: number;
-      updatedAt: string;
-    }[] = [];
-
-    const searchRecursive = (dir: string, baseDir = dir) => {
-      if (matches.length >= 100) return;
-      if (!fs.existsSync(dir)) return;
-
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (matches.length >= 100) break;
-        if (
-          entry.name === ".git" ||
-          entry.name === ".trash" ||
-          entry.name === "node_modules"
-        )
-          continue;
-
-        const fullPath = path.join(dir, entry.name);
-        const relPath = path.relative(baseDir, fullPath).replace(/\\/g, "/");
-
-        if (entry.name.toLowerCase().includes(q)) {
-          const stats = fs.statSync(fullPath);
-          matches.push({
-            name: relPath,
-            sizeBytes: entry.isFile() ? stats.size : 0,
-            updatedAt: stats.mtime.toISOString(),
-          });
-        }
-
-        if (entry.isDirectory()) {
-          searchRecursive(fullPath, baseDir);
-        }
-      }
-    };
-
-    searchRecursive(HOOKS_DIR, HOOKS_DIR);
+    const q = ((req.query.q as string) || "").trim();
+    const matches = searchDirectoryEntries(HOOKS_DIR, q, 100);
     res.json({ items: matches, total: matches.length });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -215,7 +106,7 @@ hooksRouter.get('/files', requireSuperuser, (req: Request, res: Response) => {
       return res.json({ items, total: items.length, hooksDir: HOOKS_DIR });
     }
 
-    const files = getAllHookFilesRecursively(HOOKS_DIR);
+    const files = listFilesRecursive(HOOKS_DIR, HOOKS_DIR, true);
     files.sort((a, b) => a.name.localeCompare(b.name));
     res.json({ items: files, total: files.length, hooksDir: HOOKS_DIR });
   } catch (err: any) {
@@ -417,14 +308,7 @@ hooksRouter.delete(['/files/folder', '/files/directory'], requireSuperuser, asyn
       return res.status(404).json({ error: `Folder "${rawPath}" not found` });
     }
 
-    const trashDir = path.resolve(process.cwd(), '.trash');
-    if (!fs.existsSync(trashDir)) {
-      fs.mkdirSync(trashDir, { recursive: true });
-    }
-
-    const safeClean = rawPath.replace(/[\/\\]/g, '_');
-    const trashTarget = path.join(trashDir, `${Date.now()}_hooks_dir_${safeClean}`);
-    safeMoveSync(dirPath, trashTarget);
+    moveToTrashSync(dirPath, 'hooks_dir', rawPath);
 
     // Reload hooks registry
     await loadAllHooks();
@@ -492,15 +376,7 @@ hooksRouter.delete('/files/file', requireSuperuser, async (req: Request, res: Re
       return res.status(404).json({ error: `Hook file "${filename}" not found` });
     }
 
-    // Move to .trash folder
-    const trashDir = path.resolve(process.cwd(), '.trash');
-    if (!fs.existsSync(trashDir)) {
-      fs.mkdirSync(trashDir, { recursive: true });
-    }
-
-    const safeClean = filename.replace(/[\/\\]/g, '_');
-    const trashTarget = path.join(trashDir, `${Date.now()}_hooks_${safeClean}`);
-    safeMoveSync(filePath, trashTarget);
+    moveToTrashSync(filePath, 'hooks', filename);
 
     // Reload hooks registry
     await loadAllHooks();
@@ -522,15 +398,7 @@ hooksRouter.delete(/^\/files\/(.+)$/, requireSuperuser, async (req: Request, res
       return res.status(404).json({ error: `Hook file "${filename}" not found` });
     }
 
-    // Move to .trash folder
-    const trashDir = path.resolve(process.cwd(), '.trash');
-    if (!fs.existsSync(trashDir)) {
-      fs.mkdirSync(trashDir, { recursive: true });
-    }
-
-    const safeClean = filename.replace(/[\/\\]/g, '_');
-    const trashTarget = path.join(trashDir, `${Date.now()}_hooks_${safeClean}`);
-    safeMoveSync(filePath, trashTarget);
+    moveToTrashSync(filePath, 'hooks', filename);
 
     // Reload hooks registry
     await loadAllHooks();

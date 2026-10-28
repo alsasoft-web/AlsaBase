@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction, Router } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
-import { db, hashPassword, verifyPassword } from "./db";
+import fs from "node:fs";
+import path from "node:path";
+import { db, DB_PATH, hashPassword, verifyPassword } from "./db";
 import {
   getAllSettings,
   getClientIp,
@@ -10,8 +12,57 @@ import {
   sendEmail,
 } from "./settings";
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || "AlsaBase_super_secret_jwt_key_2026";
+function getOrCreateJwtSecret(): string {
+  if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim() !== "") {
+    return process.env.JWT_SECRET.trim();
+  }
+  const secretFile = path.join(path.dirname(DB_PATH), ".jwt_secret");
+  try {
+    if (fs.existsSync(secretFile)) {
+      const saved = fs.readFileSync(secretFile, "utf8").trim();
+      if (saved) return saved;
+    }
+    const generated = crypto.randomBytes(32).toString("hex");
+    fs.writeFileSync(secretFile, generated, { encoding: "utf8", mode: 0o600 });
+    return generated;
+  } catch {
+    return crypto.randomBytes(32).toString("hex");
+  }
+}
+
+const JWT_SECRET = getOrCreateJwtSecret();
+
+// Track failed OTP/MFA verification attempts (max 5 before token invalidation)
+const otpFailedAttempts = new Map<string, { count: number; expiresAt: number }>();
+
+export function recordFailedOtpAttempt(key: string): boolean {
+  const now = Date.now();
+  const entry = otpFailedAttempts.get(key);
+  const count = (entry && entry.expiresAt > now ? entry.count : 0) + 1;
+  if (count >= 5) {
+    otpFailedAttempts.delete(key);
+    return true;
+  }
+  otpFailedAttempts.set(key, { count, expiresAt: now + 15 * 60 * 1000 });
+  return false;
+}
+
+export function clearFailedOtpAttempts(key: string): void {
+  otpFailedAttempts.delete(key);
+}
+
+// Periodically prune expired OTP attempt tracking entries every 5 minutes
+const otpCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of otpFailedAttempts.entries()) {
+    if (v.expiresAt <= now) {
+      otpFailedAttempts.delete(k);
+    }
+  }
+}, 300000);
+if (otpCleanupTimer.unref) {
+  otpCleanupTimer.unref();
+}
 
 export interface AuthPayload {
   id: string;
@@ -393,9 +444,9 @@ authRouter.post("/users/register", (req: Request, res: Response) => {
     const colExists = db.prepare("SELECT id FROM _collections WHERE name = 'users'").get();
     if (colExists) {
       db.prepare(`
-        INSERT OR REPLACE INTO "users" (id, username, email, name, avatar, role, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'user', ?, ?)
-      `).run(id, username, email, req.body.name || username, req.body.avatar || '', now, now);
+        INSERT OR REPLACE INTO "users" (id, email, password, name, avatar, verified, emailVisibility, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+      `).run(id, email, password_hash, req.body.name || username, req.body.avatar || '', now, now);
     }
   } catch {}
 
@@ -546,10 +597,11 @@ authRouter.post(["/request-password-reset", "/users/request-password-reset"], as
 
       return res.json({ success: true, message: "Password reset instructions sent to your email." });
     } else {
+      const isSuperuserReq = Boolean((req as any).auth?.isSuperuser);
       return res.json({
         success: true,
-        message: "Password reset token created (Email delivery disabled in settings).",
-        token: resetToken,
+        message: "If this email is registered, a password reset token has been generated (Email delivery disabled in settings).",
+        ...(isSuperuserReq ? { token: resetToken } : {}),
       });
     }
   } catch (err: any) {
@@ -577,6 +629,9 @@ authRouter.post(["/confirm-password-reset", "/users/confirm-password-reset", "/r
   const newHash = hashPassword(password);
   db.prepare("UPDATE _users SET password_hash = ?, updated_at = ? WHERE id = ?").run(newHash, now, authRow.user_id);
   db.prepare("UPDATE _superusers SET password_hash = ?, updated_at = ? WHERE id = ?").run(newHash, now, authRow.user_id);
+  try {
+    db.prepare(`UPDATE "users" SET password = ?, updated_at = ? WHERE id = ?`).run(newHash, now, authRow.user_id);
+  } catch {}
   db.prepare("DELETE FROM _auth_tokens WHERE id = ?").run(authRow.id);
 
   return res.json({ success: true, message: "Password has been successfully reset. You can now log in." });
@@ -624,10 +679,11 @@ authRouter.post(["/request-verification", "/users/request-verification"], async 
 
       return res.json({ success: true, message: "Verification link sent to your email." });
     } else {
+      const isSuperuserReq = Boolean((req as any).auth?.isSuperuser);
       return res.json({
         success: true,
         message: "Verification token generated (Email delivery disabled in settings).",
-        token: verifyToken,
+        ...(isSuperuserReq ? { token: verifyToken } : {}),
       });
     }
   } catch (err: any) {
@@ -650,6 +706,8 @@ authRouter.post(["/confirm-verification", "/users/confirm-verification"], (req: 
 
   try {
     db.prepare("UPDATE _users SET verified = 1, updated_at = ? WHERE id = ?").run(now, authRow.user_id);
+  } catch {}
+  try {
     db.prepare("UPDATE users SET verified = 1, updated_at = ? WHERE id = ?").run(now, authRow.user_id);
   } catch {}
 
@@ -703,7 +761,7 @@ authRouter.post(["/request-email-change", "/users/request-email-change"], requir
       return res.json({
         success: true,
         message: "Email change token generated (Email delivery disabled in settings).",
-        token: changeToken,
+        ...(auth.isSuperuser ? { token: changeToken } : {}),
       });
     }
   } catch (err: any) {
@@ -758,6 +816,9 @@ authRouter.post(["/request-otp", "/users/request-otp"], async (req: Request, res
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
     const now = new Date().toISOString();
 
+    db.prepare("DELETE FROM _auth_tokens WHERE email = ? AND type = 'otp'").run(cleanEmail);
+    clearFailedOtpAttempts(`otp:${cleanEmail}`);
+
     db.prepare(`
       INSERT INTO _auth_tokens (id, user_id, email, type, token, expires_at, created_at)
       VALUES (?, ?, ?, 'otp', ?, ?, ?)
@@ -779,10 +840,11 @@ authRouter.post(["/request-otp", "/users/request-otp"], async (req: Request, res
 
       return res.json({ success: true, message: "OTP verification code sent to your email." });
     } else {
+      const isSuperuserReq = Boolean((req as any).auth?.isSuperuser);
       return res.json({
         success: true,
         message: "OTP generated (Email delivery disabled in settings).",
-        otp: otpCode,
+        ...(isSuperuserReq ? { otp: otpCode } : {}),
       });
     }
   } catch (err: any) {
@@ -799,11 +861,16 @@ authRouter.post(["/verify-otp", "/users/verify-otp"], (req: Request, res: Respon
 
   const cleanEmail = email.trim().toLowerCase();
   const now = new Date().toISOString();
-  const authRow = db.prepare("SELECT * FROM _auth_tokens WHERE email = ? AND token = ? AND type = 'otp' AND expires_at > ?").get(cleanEmail, otp.trim(), now) as any;
+  const authRow = db.prepare("SELECT * FROM _auth_tokens WHERE email = ? AND token = ? AND type = 'otp' AND expires_at > ?").get(cleanEmail, String(otp).trim(), now) as any;
 
   if (!authRow) {
+    if (recordFailedOtpAttempt(`otp:${cleanEmail}`)) {
+      db.prepare("DELETE FROM _auth_tokens WHERE email = ? AND type = 'otp'").run(cleanEmail);
+    }
     return res.status(400).json({ error: "Invalid or expired OTP verification code" });
   }
+
+  clearFailedOtpAttempts(`otp:${cleanEmail}`);
 
   const user = db.prepare("SELECT id, username, email, role, created_at FROM _users WHERE id = ?").get(authRow.user_id) as any;
   if (!user) {

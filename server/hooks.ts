@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequire } from "node:module";
 import cron, { ScheduledTask } from "node-cron";
 import { Request, Response, NextFunction } from "express";
 import { db } from "./db";
 import { AuthPayload } from "./auth";
 import { logToDb } from "./logger";
-import { listCollections } from "./schema";
+import { listCollections, sanitizeIdentifier } from "./schema";
 import { safeMoveSync } from "./files";
 import {
   onRecordEvent,
@@ -581,7 +582,8 @@ export function createCollectionsApi(sourceContext: string = "internal") {
         offset?: number;
       } = {},
     ) => {
-      let sql = `SELECT * FROM ${collectionName}`;
+      const safeCol = sanitizeIdentifier(collectionName);
+      let sql = `SELECT * FROM "${safeCol}"`;
       const params: any[] = options.params || [];
       if (options.filter) {
         sql += ` WHERE ${options.filter}`;
@@ -595,16 +597,18 @@ export function createCollectionsApi(sourceContext: string = "internal") {
           sql += ` OFFSET ${Number(options.offset)}`;
         }
       }
-      return db.prepare(sql).all(...params);
+      return params.length > 0 ? db.prepare(sql).all(...params) : db.prepare(sql).all();
     },
 
     // High-level find by ID
     findById: (collectionName: string, id: string) => {
-      return db.prepare(`SELECT * FROM ${collectionName} WHERE id = ?`).get(id);
+      const safeCol = sanitizeIdentifier(collectionName);
+      return db.prepare(`SELECT * FROM "${safeCol}" WHERE id = ?`).get(id);
     },
 
     // High-level insert record
     create: (collectionName: string, data: Record<string, any>) => {
+      const safeCol = sanitizeIdentifier(collectionName);
       const id = data.id || crypto.randomUUID();
       const now = new Date().toISOString();
       const payload: Record<string, any> = {
@@ -614,22 +618,24 @@ export function createCollectionsApi(sourceContext: string = "internal") {
         updated_at: data.updated_at || now,
       };
 
-      const keys = Object.keys(payload);
-      const placeholders = keys.map(() => "?").join(", ");
-      const values = keys.map((k) => {
+      const rawKeys = Object.keys(payload);
+      const safeKeys = rawKeys.map((k) => sanitizeIdentifier(k));
+      const placeholders = safeKeys.map(() => "?").join(", ");
+      const values = rawKeys.map((k) => {
         const v = payload[k];
         if (v !== null && typeof v === "object") return JSON.stringify(v);
         if (typeof v === "boolean") return v ? 1 : 0;
         return v;
       });
 
-      const sql = `INSERT INTO ${collectionName} (${keys.join(", ")}) VALUES (${placeholders})`;
+      const sql = `INSERT INTO "${safeCol}" (${safeKeys.map((k) => `"${k}"`).join(", ")}) VALUES (${placeholders})`;
       db.prepare(sql).run(...values);
       return payload;
     },
 
     // High-level update record
     update: (collectionName: string, id: string, data: Record<string, any>) => {
+      const safeCol = sanitizeIdentifier(collectionName);
       const payload: Record<string, any> = {
         ...data,
         updated_at: new Date().toISOString(),
@@ -637,14 +643,15 @@ export function createCollectionsApi(sourceContext: string = "internal") {
       delete payload.id;
       delete payload.created_at;
 
-      const keys = Object.keys(payload);
-      if (keys.length === 0)
+      const rawKeys = Object.keys(payload);
+      if (rawKeys.length === 0)
         return db
-          .prepare(`SELECT * FROM ${collectionName} WHERE id = ?`)
+          .prepare(`SELECT * FROM "${safeCol}" WHERE id = ?`)
           .get(id);
 
-      const setClause = keys.map((k) => `${k} = ?`).join(", ");
-      const values = keys.map((k) => {
+      const safeKeys = rawKeys.map((k) => sanitizeIdentifier(k));
+      const setClause = safeKeys.map((k) => `"${k}" = ?`).join(", ");
+      const values = rawKeys.map((k) => {
         const v = payload[k];
         if (v !== null && typeof v === "object") return JSON.stringify(v);
         if (typeof v === "boolean") return v ? 1 : 0;
@@ -652,24 +659,26 @@ export function createCollectionsApi(sourceContext: string = "internal") {
       });
 
       values.push(id);
-      db.prepare(`UPDATE ${collectionName} SET ${setClause} WHERE id = ?`).run(
+      db.prepare(`UPDATE "${safeCol}" SET ${setClause} WHERE id = ?`).run(
         ...values,
       );
-      return db.prepare(`SELECT * FROM ${collectionName} WHERE id = ?`).get(id);
+      return db.prepare(`SELECT * FROM "${safeCol}" WHERE id = ?`).get(id);
     },
 
     // High-level delete record
     delete: (collectionName: string, id: string) => {
-      return db.prepare(`DELETE FROM ${collectionName} WHERE id = ?`).run(id);
+      const safeCol = sanitizeIdentifier(collectionName);
+      return db.prepare(`DELETE FROM "${safeCol}" WHERE id = ?`).run(id);
     },
 
     // High-level count records
     count: (collectionName: string, whereClause?: string, ...params: any[]) => {
+      const safeCol = sanitizeIdentifier(collectionName);
       const flattenedParams =
         params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
       const sql = whereClause
-        ? `SELECT COUNT(*) as total FROM ${collectionName} WHERE ${whereClause}`
-        : `SELECT COUNT(*) as total FROM ${collectionName}`;
+        ? `SELECT COUNT(*) as total FROM "${safeCol}" WHERE ${whereClause}`
+        : `SELECT COUNT(*) as total FROM "${safeCol}"`;
       const row = db.prepare(sql).get(...flattenedParams) as any;
       return row?.total || 0;
     },
@@ -834,12 +843,12 @@ export function createPublicFilesApi() {
   };
 }
 
-// Global active execution log buffer for capturing cron/route output
-let activeCronExecutionBuffer: {
+// AsyncLocalStorage for capturing cron execution logs concurrently
+const cronExecutionStorage = new AsyncLocalStorage<{
   cronName: string;
   logs: string[];
   onLog?: (line: string) => void;
-} | null = null;
+}>();
 
 // Execute a registered cron job with real-time log callback
 export async function executeHookCron(
@@ -860,61 +869,49 @@ export async function executeHookCron(
   const start = performance.now();
   const now = new Date().toISOString();
   const executionLogs: string[] = [];
-  activeCronExecutionBuffer = { cronName: name, logs: executionLogs, onLog };
+  const cronStore = { cronName: name, logs: executionLogs, onLog };
 
-  console.log(`[Hooks:Cron] Running job "${name}"...`);
+  return cronExecutionStorage.run(cronStore, async () => {
+    console.log(`[Hooks:Cron] Running job "${name}"...`);
 
-  const collectionsApi = createCollectionsApi(`cron:${name}`);
-  const cronLogger = (...args: any[]) => {
-    const formatted = args
-      .map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a)))
-      .join(" ");
-    executionLogs.push(formatted);
-    if (onLog) {
-      onLog(formatted);
-    }
-    console.log(`[Cron:${name}]`, ...args);
-    logToDb({
-      level: "INFO",
-      method: "CRON_LOG",
-      path: `/cron/${name}`,
-      status: 200,
-      duration_ms: 0,
-      error_message: formatted,
-      metadata_json: JSON.stringify({
-        cronName: name,
-        schedule: cronDef.schedule,
-        sourceFile: cronDef.sourceFile,
-      }),
+    const collectionsApi = createCollectionsApi(`cron:${name}`);
+    const cronLogger = (...args: any[]) => {
+      const formatted = args
+        .map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a)))
+        .join(" ");
+      executionLogs.push(formatted);
+      if (onLog) {
+        onLog(formatted);
+      }
+      console.log(`[Cron:${name}]`, ...args);
+      logToDb({
+        level: "INFO",
+        method: "CRON_LOG",
+        path: `/cron/${name}`,
+        status: 200,
+        duration_ms: 0,
+        error_message: formatted,
+        metadata_json: JSON.stringify({
+          cronName: name,
+          schedule: cronDef.schedule,
+          sourceFile: cronDef.sourceFile,
+        }),
+      });
+    };
+
+    const execKey =
+      executionId ||
+      `cron_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    activeRunningProcesses.set(execKey, {
+      commandName: name,
+      cancel: () => {
+        console.log(`[Hooks:Cron] Cancellation requested for cron "${name}"`);
+      },
     });
-  };
 
-  const execKey =
-    executionId ||
-    `cron_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  activeRunningProcesses.set(execKey, {
-    commandName: name,
-    cancel: () => {
-      console.log(`[Hooks:Cron] Cancellation requested for cron "${name}"`);
-    },
-  });
-
-  try {
-    const publicFilesApi = createPublicFilesApi();
-    const sandboxContext = {
-      db,
-      collections: collectionsApi,
-      publicFiles: publicFilesApi,
-      public: publicFilesApi,
-      savePublicFile: publicFilesApi.save,
-      savePublicJson: publicFilesApi.saveJson,
-      readPublicFile: publicFilesApi.read,
-      readPublicJson: publicFilesApi.readJson,
-      deletePublicFile: publicFilesApi.delete,
-      publicPath: publicFilesApi.path,
-      PUBLIC_DIR,
-      log: cronLogger,
-      $app: {
+    try {
+      const publicFilesApi = createPublicFilesApi();
+      const sandboxContext: any = {
         db,
         collections: collectionsApi,
         publicFiles: publicFilesApi,
@@ -927,69 +924,68 @@ export async function executeHookCron(
         publicPath: publicFilesApi.path,
         PUBLIC_DIR,
         log: cronLogger,
-      },
-    };
+      };
+      sandboxContext.$app = sandboxContext;
 
-    await cronDef.handler(sandboxContext);
-    const duration = Number((performance.now() - start).toFixed(2));
+      await cronDef.handler(sandboxContext);
+      const duration = Number((performance.now() - start).toFixed(2));
 
-    cronDef.last_run_at = now;
-    cronDef.last_status = "SUCCESS";
-    cronDef.last_duration_ms = duration;
-    saveCronExecution(name, cronDef.schedule, "SUCCESS", duration, now);
+      cronDef.last_run_at = now;
+      cronDef.last_status = "SUCCESS";
+      cronDef.last_duration_ms = duration;
+      saveCronExecution(name, cronDef.schedule, "SUCCESS", duration, now);
 
-    logToDb({
-      level: "INFO",
-      method: "CRON",
-      path: `/cron/${name}`,
-      status: 200,
-      duration_ms: duration,
-      error_message: `Cron [${name}] completed successfully (${duration}ms). ${executionLogs.length} log(s) captured.`,
-      metadata_json: JSON.stringify({
-        cronName: name,
-        schedule: cronDef.schedule,
-        sourceFile: cronDef.sourceFile,
+      logToDb({
+        level: "INFO",
+        method: "CRON",
+        path: `/cron/${name}`,
+        status: 200,
+        duration_ms: duration,
+        error_message: `Cron [${name}] completed successfully (${duration}ms). ${executionLogs.length} log(s) captured.`,
+        metadata_json: JSON.stringify({
+          cronName: name,
+          schedule: cronDef.schedule,
+          sourceFile: cronDef.sourceFile,
+          output: executionLogs,
+        }),
+      });
+
+      console.log(`[Hooks:Cron] Job "${name}" finished in ${duration}ms.`);
+      return { success: true, durationMs: duration, output: executionLogs };
+    } catch (err: any) {
+      const duration = Number((performance.now() - start).toFixed(2));
+      const stack = err?.stack || "";
+
+      cronDef.last_run_at = now;
+      cronDef.last_status = "ERROR";
+      cronDef.last_duration_ms = duration;
+      saveCronExecution(name, cronDef.schedule, "ERROR", duration, now);
+
+      logToDb({
+        level: "ERROR",
+        method: "CRON",
+        path: `/cron/${name}`,
+        status: 500,
+        duration_ms: duration,
+        error_message: `Cron job [${name}] failed: ${err?.message}`,
+        stack_trace: stack,
+        metadata_json: JSON.stringify({
+          cronName: name,
+          schedule: cronDef.schedule,
+          sourceFile: cronDef.sourceFile,
+          output: executionLogs,
+        }),
+      });
+
+      console.error(`[Hooks:Cron] Job "${name}" failed:`, err);
+      return {
+        success: false,
+        durationMs: duration,
         output: executionLogs,
-      }),
-    });
-
-    console.log(`[Hooks:Cron] Job "${name}" finished in ${duration}ms.`);
-    return { success: true, durationMs: duration, output: executionLogs };
-  } catch (err: any) {
-    const duration = Number((performance.now() - start).toFixed(2));
-    const stack = err?.stack || "";
-
-    cronDef.last_run_at = now;
-    cronDef.last_status = "ERROR";
-    cronDef.last_duration_ms = duration;
-    saveCronExecution(name, cronDef.schedule, "ERROR", duration, now);
-
-    logToDb({
-      level: "ERROR",
-      method: "CRON",
-      path: `/cron/${name}`,
-      status: 500,
-      duration_ms: duration,
-      error_message: `Cron job [${name}] failed: ${err?.message}`,
-      stack_trace: stack,
-      metadata_json: JSON.stringify({
-        cronName: name,
-        schedule: cronDef.schedule,
-        sourceFile: cronDef.sourceFile,
-        output: executionLogs,
-      }),
-    });
-
-    console.error(`[Hooks:Cron] Job "${name}" failed:`, err);
-    return {
-      success: false,
-      durationMs: duration,
-      output: executionLogs,
-      error: err?.message,
-    };
-  } finally {
-    activeCronExecutionBuffer = null;
-  }
+        error: err?.message,
+      };
+    }
+  });
 }
 
 // Create execution sandbox scope
@@ -1010,10 +1006,11 @@ export function createSandboxScope(
       .join(" ");
     console.log(`[Hook:${filename}]`, ...args);
 
-    if (activeCronExecutionBuffer) {
-      activeCronExecutionBuffer.logs.push(formatted);
-      if (activeCronExecutionBuffer.onLog) {
-        activeCronExecutionBuffer.onLog(formatted);
+    const activeCron = cronExecutionStorage.getStore();
+    if (activeCron) {
+      activeCron.logs.push(formatted);
+      if (activeCron.onLog) {
+        activeCron.onLog(formatted);
       }
     }
 
@@ -1137,101 +1134,9 @@ export function createSandboxScope(
     publicPath: publicFilesApi.path,
     PUBLIC_DIR,
     log: hookLogger,
-    $app: {
-      require: hookRequire,
-      helpers: Object.fromEntries(globalHelpers),
-      registerHelper: (name: string, fn: any) => {
-        globalHelpers.set(name, fn);
-      },
-      db,
-      collections: collectionsApi,
-      publicFiles: publicFilesApi,
-      public: publicFilesApi,
-      savePublicFile: publicFilesApi.save,
-      savePublicJson: publicFilesApi.saveJson,
-      readPublicFile: publicFilesApi.read,
-      readPublicJson: publicFilesApi.readJson,
-      deletePublicFile: publicFilesApi.delete,
-      existsPublicFile: publicFilesApi.exists,
-      publicPath: publicFilesApi.path,
-      PUBLIC_DIR,
-      routerAdd: (method: string, routePath: string, arg3: any, arg4?: any) => {
-        let handler: Function;
-        let authLevel: "public" | "auth" | "superuser" = "public";
-
-        if (typeof arg3 === "function") {
-          handler = arg3;
-          if (typeof arg4 === "string") authLevel = arg4 as any;
-        } else if (typeof arg4 === "function") {
-          authLevel = (typeof arg3 === "string" ? arg3 : "public") as any;
-          handler = arg4;
-        } else {
-          throw new Error(`routerAdd requires a handler function.`);
-        }
-
-        registerRoute(method, routePath, handler, authLevel, filename);
-      },
-      cronAdd: (name: string, schedule: string, handler: Function) => {
-        registerCron(name, schedule, handler, filename);
-      },
-      cronRemove: (name: string) => {
-        unregisterCron(name);
-      },
-      commandAdd: (name: string, arg2: any, arg3?: any, arg4?: any) => {
-        let description = typeof arg2 === "string" ? arg2 : `Command ${name}`;
-        let handler: Function | undefined =
-          typeof arg2 === "function"
-            ? arg2
-            : typeof arg3 === "function"
-              ? arg3
-              : undefined;
-        let options: HookCommandOptionDef[] = Array.isArray(arg3)
-          ? arg3
-          : Array.isArray(arg4)
-            ? arg4
-            : [];
-        let usage: string | undefined =
-          typeof arg4 === "string" ? arg4 : undefined;
-        registerCommand(
-          name,
-          description,
-          filename,
-          handler,
-          options,
-          usage,
-          filePath,
-          "custom",
-        );
-      },
-      onRecordAfterCreate: (collection: string, handler: Function) => {
-        onRecordEvent("create", collection, handler);
-      },
-      onRecordAfterUpdate: (collection: string, handler: Function) => {
-        onRecordEvent("update", collection, handler);
-      },
-      onRecordAfterDelete: (collection: string, handler: Function) => {
-        onRecordEvent("delete", collection, handler);
-      },
-      onEvent: (topic: string, handler: Function) => {
-        onCustomEvent(topic, handler);
-      },
-      events: {
-        emit: (topic: string, data: any, eventName?: string) =>
-          broadcastCustomEvent(topic, data, eventName),
-        on: (topic: string, handler: Function) => onCustomEvent(topic, handler),
-      },
-      realtime: {
-        publish: (topic: string, data: any, eventName?: string) =>
-          broadcastCustomEvent(topic, data, eventName),
-        broadcast: (
-          action: "create" | "update" | "delete",
-          collection: string,
-          record: any,
-        ) => broadcastRecordEvent(action, collection, record),
-      },
-      log: hookLogger,
-    },
   };
+
+  scope.$app = scope;
 
   return scope;
 }
@@ -1990,7 +1895,6 @@ export async function executeHookCommand(
   }
 
   const collectionsApi = createCollectionsApi(cmd.sourceFile);
-  const duration = Number((performance.now() - start).toFixed(2));
 
   if (cmd.type === "script" && cmd.scriptPath) {
     const { spawn, exec } = await import("node:child_process");
@@ -2053,6 +1957,7 @@ export async function executeHookCommand(
 
       child.on("close", (code) => {
         activeRunningProcesses.delete(execKey);
+        const duration = Number((performance.now() - start).toFixed(2));
         logToDb({
           level: code === 0 ? "INFO" : "ERROR",
           method: "CLI_COMMAND",
@@ -2119,6 +2024,16 @@ export async function executeHookCommand(
         deletePublicFile: publicFilesApi.delete,
         publicPath: publicFilesApi.path,
         PUBLIC_DIR,
+      });
+
+      const duration = Number((performance.now() - start).toFixed(2));
+      logToDb({
+        level: "INFO",
+        method: "CLI_COMMAND",
+        path: `/command/${name}`,
+        status: 200,
+        duration_ms: duration,
+        error_message: `Custom command [${name}] completed successfully (${duration}ms)`,
         metadata_json: JSON.stringify({
           command: name,
           args: argsArray,

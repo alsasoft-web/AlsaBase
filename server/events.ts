@@ -3,12 +3,16 @@ import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as SocketIOServer, Socket as SocketIOSocket } from 'socket.io';
 import type { Server as HttpServer } from 'node:http';
+import { AuthPayload, verifyToken, requireAuth } from './auth';
+import { getCollection } from './schema';
+import { evaluateRule } from './crud';
 
 export interface SSEClient {
   id: string;
   res: Response;
   subscriptions: Set<string>;
   connectedAt: string;
+  auth?: AuthPayload;
 }
 
 export interface WSClient {
@@ -16,6 +20,16 @@ export interface WSClient {
   ws: WebSocket;
   subscriptions: Set<string>;
   connectedAt: string;
+  auth?: AuthPayload;
+}
+
+function canReceiveRecordEvent(collection: string, record: any, auth?: AuthPayload): boolean {
+  if (auth?.isSuperuser) return true;
+  if (collection === '_superusers') return false;
+  const col = getCollection(collection);
+  if (!col) return false;
+  const rule = col.rules?.view !== undefined ? col.rules.view : col.rules?.list;
+  return evaluateRule(rule, auth, record);
 }
 
 export interface RecordEventPayload {
@@ -77,10 +91,14 @@ export function registerSSEClient(req: Request, res: Response, initialTopics: st
     'Access-Control-Allow-Origin': '*'
   });
 
+  const auth = (req as any).auth as AuthPayload | undefined;
   // Create client entry
   const subs = new Set<string>();
   for (const t of initialTopics) {
-    if (t && t.trim()) subs.add(t.trim());
+    const trimmed = t && t.trim();
+    if (!trimmed) continue;
+    if (trimmed === 'logs' && !auth?.isSuperuser) continue;
+    subs.add(trimmed);
   }
   // Default to subscribing to '*' if no topic specified
   if (subs.size === 0) {
@@ -91,7 +109,8 @@ export function registerSSEClient(req: Request, res: Response, initialTopics: st
     id: clientId,
     res,
     subscriptions: subs,
-    connectedAt: new Date().toISOString()
+    connectedAt: new Date().toISOString(),
+    auth
   };
 
   activeClients.set(clientId, client);
@@ -123,7 +142,10 @@ export function updateClientSubscriptions(clientId: string, subscriptions: strin
 
   client.subscriptions.clear();
   for (const s of subscriptions) {
-    if (s && s.trim()) client.subscriptions.add(s.trim());
+    const trimmed = s && s.trim();
+    if (!trimmed) continue;
+    if (trimmed === 'logs' && !client.auth?.isSuperuser) continue;
+    client.subscriptions.add(trimmed);
   }
 
   // Notify client of updated subscriptions
@@ -131,7 +153,7 @@ export function updateClientSubscriptions(clientId: string, subscriptions: strin
   return true;
 }
 
-// Broadcast live system log events to Socket.IO, WebSocket, and SSE clients
+// Broadcast live system log events to superuser Socket.IO, WebSocket, and SSE clients
 export function broadcastLogEvent(log: any) {
   const payload = {
     type: 'log',
@@ -140,19 +162,25 @@ export function broadcastLogEvent(log: any) {
     timestamp: new Date().toISOString()
   };
 
-  // 1. Dispatch to Socket.IO clients
+  // 1. Dispatch to superuser Socket.IO clients only
   if (ioInstance) {
-    ioInstance.to('logs').emit('logs', payload);
-    ioInstance.to('*').emit('logs', payload);
-    ioInstance.emit('log', payload);
+    for (const socket of ioInstance.sockets.sockets.values()) {
+      const socketAuth = (socket as any).auth as AuthPayload | undefined;
+      if (!socketAuth?.isSuperuser) continue;
+      if (socket.rooms.has('logs') || socket.rooms.has('*')) {
+        socket.emit('logs', payload);
+        socket.emit('log', payload);
+      }
+    }
   }
 
   const payloadString = JSON.stringify(payload);
   const eventMsg = `event: logs\ndata: ${payloadString}\n\n`;
   const genericMsg = `event: *\ndata: ${payloadString}\n\n`;
 
-  // 2. Dispatch to SSE clients
+  // 2. Dispatch to superuser SSE clients only
   for (const client of activeClients.values()) {
+    if (!client.auth?.isSuperuser) continue;
     try {
       if (client.subscriptions.has('logs') || client.subscriptions.has('*')) {
         client.res.write(client.subscriptions.has('logs') ? eventMsg : genericMsg);
@@ -162,8 +190,9 @@ export function broadcastLogEvent(log: any) {
     }
   }
 
-  // 3. Dispatch to WebSocket clients
+  // 3. Dispatch to superuser WebSocket clients only
   for (const client of activeWsClients.values()) {
+    if (!client.auth?.isSuperuser) continue;
     try {
       if (client.ws.readyState === WebSocket.OPEN) {
         if (client.subscriptions.has('logs') || client.subscriptions.has('*')) {
@@ -185,28 +214,43 @@ export function broadcastRecordEvent(action: 'create' | 'update' | 'delete', col
     timestamp: new Date().toISOString()
   };
 
-  // 1. Dispatch to Socket.IO clients
+  // 1. Dispatch to authorized Socket.IO clients
   if (ioInstance) {
-    ioInstance.to(collection).emit(collection, payload);
-    ioInstance.to(collection).emit('record', payload);
-    if (record?.id) {
-      ioInstance.to(`${collection}/${record.id}`).emit(`${collection}/${record.id}`, payload);
-      ioInstance.to(`${collection}/${record.id}`).emit('record', payload);
+    for (const socket of ioInstance.sockets.sockets.values()) {
+      const socketAuth = (socket as any).auth as AuthPayload | undefined;
+      const inCollection = socket.rooms.has(collection);
+      const inRecord = Boolean(record?.id && socket.rooms.has(`${collection}/${record.id}`));
+      const inWildcard = socket.rooms.has('*');
+
+      if (!inCollection && !inRecord && !inWildcard) continue;
+      if (!canReceiveRecordEvent(collection, record, socketAuth)) continue;
+
+      if (inCollection) {
+        socket.emit(collection, payload);
+      }
+      if (inRecord && record?.id) {
+        socket.emit(`${collection}/${record.id}`, payload);
+      }
+      if (inWildcard) {
+        socket.emit('*', payload);
+      }
+      socket.emit('record', payload);
     }
-    ioInstance.to('*').emit('*', payload);
-    ioInstance.to('*').emit('record', payload);
   }
 
   const payloadString = JSON.stringify(payload);
   const eventMsg = `event: ${collection}\ndata: ${payloadString}\n\n`;
   const genericMsg = `event: *\ndata: ${payloadString}\n\n`;
 
-  // 2. Dispatch to SSE clients
+  // 2. Dispatch to authorized SSE clients
   for (const client of activeClients.values()) {
     try {
       const matchSpecific = client.subscriptions.has(collection);
       const matchRecord = record?.id && client.subscriptions.has(`${collection}/${record.id}`);
       const matchAll = client.subscriptions.has('*');
+
+      if (!matchSpecific && !matchRecord && !matchAll) continue;
+      if (!canReceiveRecordEvent(collection, record, client.auth)) continue;
 
       if (matchSpecific || matchRecord) {
         client.res.write(eventMsg);
@@ -218,7 +262,7 @@ export function broadcastRecordEvent(action: 'create' | 'update' | 'delete', col
     }
   }
 
-  // 3. Dispatch to WebSocket clients
+  // 3. Dispatch to authorized WebSocket clients
   const wsMsg = JSON.stringify({ type: 'record', topic: collection, ...payload });
   for (const client of activeWsClients.values()) {
     try {
@@ -227,7 +271,7 @@ export function broadcastRecordEvent(action: 'create' | 'update' | 'delete', col
         const matchRecord = record?.id && client.subscriptions.has(`${collection}/${record.id}`);
         const matchAll = client.subscriptions.has('*');
 
-        if (matchSpecific || matchRecord || matchAll) {
+        if ((matchSpecific || matchRecord || matchAll) && canReceiveRecordEvent(collection, record, client.auth)) {
           client.ws.send(wsMsg);
         }
       }
@@ -326,11 +370,25 @@ export function initWebSocketServer(server: HttpServer) {
     const clientId = crypto.randomUUID();
     const subs = new Set<string>(['*']); // default subscribe all
 
+    let wsAuth: AuthPayload | undefined;
+    try {
+      const urlObj = new URL(req.url || '/', 'http://localhost');
+      const tokenParam = urlObj.searchParams.get('token');
+      const authHeader = req.headers.authorization;
+      const rawToken =
+        tokenParam ||
+        (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader);
+      if (rawToken) {
+        wsAuth = verifyToken(rawToken) || undefined;
+      }
+    } catch {}
+
     const client: WSClient = {
       id: clientId,
       ws,
       subscriptions: subs,
       connectedAt: new Date().toISOString(),
+      auth: wsAuth,
     };
 
     activeWsClients.set(clientId, client);
@@ -349,10 +407,18 @@ export function initWebSocketServer(server: HttpServer) {
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        if (msg.action === 'subscribe' || msg.type === 'subscribe') {
+        if (msg.action === 'auth' || msg.type === 'auth') {
+          if (msg.token && typeof msg.token === 'string') {
+            client.auth = verifyToken(msg.token) || undefined;
+          }
+        } else if (msg.action === 'subscribe' || msg.type === 'subscribe') {
           const topics = Array.isArray(msg.topic) ? msg.topic : [msg.topic || msg.topicName || msg.subscriptions];
           for (const t of topics.flat()) {
-            if (t && typeof t === 'string') client.subscriptions.add(t.trim());
+            if (t && typeof t === 'string') {
+              const trimmed = t.trim();
+              if (trimmed === 'logs' && !client.auth?.isSuperuser) continue;
+              client.subscriptions.add(trimmed);
+            }
           }
           ws.send(JSON.stringify({
             type: 'subscriptions',
@@ -402,6 +468,16 @@ export function initSocketIOServer(server: HttpServer): SocketIOServer {
   });
 
   ioInstance.on('connection', (socket: SocketIOSocket) => {
+    const rawToken =
+      socket.handshake.auth?.token ||
+      (socket.handshake.query?.token as string) ||
+      (socket.handshake.headers?.authorization?.startsWith('Bearer ')
+        ? socket.handshake.headers.authorization.slice(7).trim()
+        : socket.handshake.headers?.authorization);
+    if (rawToken && typeof rawToken === 'string') {
+      (socket as any).auth = verifyToken(rawToken) || undefined;
+    }
+
     // Automatically join default room '*'
     socket.join('*');
 
@@ -414,6 +490,10 @@ export function initSocketIOServer(server: HttpServer): SocketIOServer {
 
     // Handle subscribe to topics/collections
     socket.on('subscribe', (data: any) => {
+      if (data?.token && typeof data.token === 'string') {
+        (socket as any).auth = verifyToken(data.token) || (socket as any).auth;
+      }
+      const socketAuth = (socket as any).auth as AuthPayload | undefined;
       const rawTopics = Array.isArray(data)
         ? data
         : typeof data === 'string'
@@ -427,6 +507,7 @@ export function initSocketIOServer(server: HttpServer): SocketIOServer {
         if (t && typeof t === 'string') {
           const trimmed = t.trim();
           if (trimmed) {
+            if (trimmed === 'logs' && !socketAuth?.isSuperuser) continue;
             socket.join(trimmed);
             topics.push(trimmed);
           }
@@ -461,9 +542,10 @@ export function initSocketIOServer(server: HttpServer): SocketIOServer {
       });
     });
 
-    // Handle publishing custom events from client socket
+    // Handle publishing custom events from authenticated client socket
     socket.on('publish', (payload: any) => {
-      if (payload && payload.topic) {
+      if (!(socket as any).auth) return;
+      if (payload && payload.topic && payload.topic !== 'logs') {
         broadcastCustomEvent(payload.topic, payload.data ?? {}, payload.event);
       }
     });
@@ -504,7 +586,6 @@ export function onCustomEvent(topic: string, callback: Function) {
 
 // Clear all backend listeners (used on hooks reload)
 export function clearBackendEventListeners() {
-  recordListeners.clear;
   recordListeners.clear();
   customEventListeners.clear();
 }
@@ -620,10 +701,10 @@ realtimeRouter.post('/realtime/subscriptions', (req: Request, res: Response) => 
 });
 
 // Publish custom web events via REST
-realtimeRouter.post(['/realtime/publish', '/events/emit'], (req: Request, res: Response) => {
+realtimeRouter.post(['/realtime/publish', '/events/emit'], requireAuth, (req: Request, res: Response) => {
   const { topic, data, event } = req.body;
-  if (!topic) {
-    return res.status(400).json({ error: 'Field "topic" is required to publish an event' });
+  if (!topic || topic === 'logs') {
+    return res.status(400).json({ error: 'Valid field "topic" is required to publish an event' });
   }
 
   broadcastCustomEvent(topic, data ?? {}, event);

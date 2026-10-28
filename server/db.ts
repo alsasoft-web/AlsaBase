@@ -114,29 +114,6 @@ export function initSystemTables() {
     CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON _auth_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_crons_name ON _crons(name);
   `);
-
-  // Purge oversized/corrupted logs from recursion and reclaim space
-  try {
-    const bloatedCount =
-      (
-        db
-          .prepare(
-            "SELECT COUNT(*) as c FROM _logs WHERE length(metadata_json) > 3000 OR metadata_json LIKE '%\"totalPages\":%' OR metadata_json LIKE '%\"items\":%'",
-          )
-          .get() as any
-      )?.c || 0;
-    if (bloatedCount > 0) {
-      console.log(
-        `[DB] Pruning ${bloatedCount} bloated/corrupt log entries...`,
-      );
-      db.prepare(
-        "DELETE FROM _logs WHERE length(metadata_json) > 3000 OR metadata_json LIKE '%\"totalPages\":%' OR metadata_json LIKE '%\"items\":%'",
-      ).run();
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
-      db.exec("VACUUM;");
-      console.log(`[DB] VACUUM completed in place.`);
-    }
-  } catch {}
 }
 
 // Ensure system tables are ready on load

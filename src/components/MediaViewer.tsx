@@ -98,6 +98,14 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
   showCodeToggle = false,
 }) => {
   const { mediaType } = isMediaFilename(filename);
+  const authToken =
+    localStorage.getItem("alsabase_token") ||
+    localStorage.getItem("AlsaBase_token") ||
+    "";
+  const authSrc =
+    authToken && src.startsWith("/api/") && !src.includes("token=")
+      ? `${src}${src.includes("?") ? "&" : "?"}token=${encodeURIComponent(authToken)}`
+      : src;
   const isSvg = filename.toLowerCase().endsWith(".svg");
 
   const [zoom, setZoom] = useState<number>(1);
@@ -368,7 +376,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
               size="sm"
               variant="subtle"
               component="a"
-              href={src}
+              href={authSrc}
               target="_blank"
               style={{ color: "var(--color-text-dimmed)" }}
             >
@@ -381,7 +389,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
               size="sm"
               variant="subtle"
               component="a"
-              href={src}
+              href={authSrc}
               download={filename.split("/").pop()}
               style={{ color: "var(--color-text-dimmed)" }}
             >
@@ -434,7 +442,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
           >
             <img
               ref={imageRef}
-              src={src}
+              src={authSrc}
               alt={filename}
               onLoad={handleImageLoad}
               draggable={false}
@@ -492,7 +500,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
             </div>
             <audio
               controls
-              src={src}
+              src={authSrc}
               style={{
                 width: "100%",
                 outline: "none",
@@ -519,7 +527,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
           >
             <video
               controls
-              src={src}
+              src={authSrc}
               style={{
                 maxWidth: "100%",
                 maxHeight: "75vh",
@@ -534,7 +542,7 @@ export const MediaViewer: React.FC<MediaViewerProps> = ({
         {/* 4. PDF VIEWER */}
         {mediaType === "pdf" && (
           <iframe
-            src={src}
+            src={authSrc}
             title={filename}
             style={{
               width: "100%",

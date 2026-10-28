@@ -146,6 +146,8 @@ function getFieldIcon(type: FieldType, name?: string) {
       return <IconLink size={15} color="#3b82f6" />;
     case "select":
       return <IconListCheck size={15} color="#14b8a6" />;
+    case "relation":
+      return <IconSitemap size={15} color="#10e57a" />;
     default:
       return <IconLetterT size={15} color="#94a3b8" />;
   }
@@ -2550,7 +2552,9 @@ export const CollectionsView: React.FC = () => {
                                           fileObj = { name: "avatar.png" };
                                         } else {
                                           const isImg = /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(rawVal);
-                                          const fileUrl = `/api/files/${encodeURIComponent(selectedCollection.name)}/${encodeURIComponent(rec.id)}/${encodeURIComponent(rawVal)}`;
+                                          const authToken = localStorage.getItem("alsabase_token") || localStorage.getItem("AlsaBase_token") || "";
+                                          const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+                                          const fileUrl = `/api/files/${encodeURIComponent(selectedCollection.name)}/${encodeURIComponent(rec.id)}/${encodeURIComponent(rawVal)}${tokenParam}`;
                                           fileObj = {
                                             name: rawVal,
                                             url: fileUrl,
@@ -2716,6 +2720,67 @@ export const CollectionsView: React.FC = () => {
                                             k.toLowerCase() ===
                                             f.name.toLowerCase()
                                         )?.[1];
+
+                                  if (
+                                    (f.type === "relation" || Boolean(f.relationCollection)) &&
+                                    f.relationCollection
+                                  ) {
+                                    const valuesArr = Array.isArray(fieldVal)
+                                      ? fieldVal
+                                      : fieldVal !== undefined && fieldVal !== null && fieldVal !== ""
+                                      ? [fieldVal]
+                                      : [];
+
+                                    return (
+                                      <Table.Td key={f.name}>
+                                        {valuesArr.length > 0 ? (
+                                          <Group gap={4} wrap="nowrap">
+                                            {valuesArr.map((vItem, vIdx) => (
+                                              <Tooltip
+                                                key={vIdx}
+                                                label={`Jump to ${f.relationCollection} (${f.relationField || "id"} = ${vItem})`}
+                                                withArrow
+                                              >
+                                                <Badge
+                                                  size="xs"
+                                                  variant="light"
+                                                  color="teal"
+                                                  style={{
+                                                    cursor: "pointer",
+                                                    fontFamily: "var(--font-mono)",
+                                                    textTransform: "none",
+                                                  }}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const targetCol = collections.find(
+                                                      (c) =>
+                                                        c.name === f.relationCollection ||
+                                                        c.id === f.relationCollection
+                                                    );
+                                                    if (targetCol) {
+                                                      const targetFld = f.relationField || "id";
+                                                      const filterStr = `${targetFld} = "${vItem}"`;
+                                                      setSelectedCollection(targetCol);
+                                                      setRecordFilter(filterStr);
+                                                      setAppliedFilter(filterStr);
+                                                      setFilterDrawerOpen(true);
+                                                      setRecordPage(1);
+                                                    }
+                                                  }}
+                                                >
+                                                  {f.relationCollection}: {String(vItem).slice(0, 14)}
+                                                </Badge>
+                                              </Tooltip>
+                                            ))}
+                                          </Group>
+                                        ) : (
+                                          <Text size="xs" c="dimmed">
+                                            -
+                                          </Text>
+                                        )}
+                                      </Table.Td>
+                                    );
+                                  }
 
                                   return (
                                     <Table.Td key={f.name}>
@@ -3756,8 +3821,9 @@ export const CollectionsView: React.FC = () => {
                                   { label: "email", value: "email" },
                                   { label: "url", value: "url" },
                                   { label: "select", value: "select" },
+                                  { label: "relation", value: "relation" },
                                 ]}
-                                w={105}
+                                w={110}
                                 styles={{
                                   input: {
                                     backgroundColor: "var(--color-bg-well)",
@@ -4299,6 +4365,89 @@ export const CollectionsView: React.FC = () => {
                                       }
                                       mb="sm"
                                     />
+                                  )}
+
+                                  {/* Relation-specific: target collection & field */}
+                                  {field.type === "relation" && (
+                                    <Paper
+                                      p="xs"
+                                      withBorder
+                                      mb="sm"
+                                      style={{
+                                        backgroundColor: "var(--color-bg-card)",
+                                        borderColor: "var(--color-border)",
+                                        borderRadius: 6,
+                                      }}
+                                    >
+                                      <Stack gap="xs">
+                                        <Grid>
+                                          <Grid.Col span={6}>
+                                            <Select
+                                              label="Target Collection"
+                                              placeholder="Select table"
+                                              size="xs"
+                                              value={field.relationCollection || ""}
+                                              onChange={(val) =>
+                                                updateField(idx, {
+                                                  relationCollection: val || undefined,
+                                                  relationField: field.relationField || "id",
+                                                })
+                                              }
+                                              data={collections.map((c) => ({
+                                                label: c.name,
+                                                value: c.name,
+                                              }))}
+                                            />
+                                          </Grid.Col>
+                                          <Grid.Col span={6}>
+                                            <Select
+                                              label="Target Field"
+                                              placeholder="id"
+                                              size="xs"
+                                              value={field.relationField || "id"}
+                                              onChange={(val) =>
+                                                updateField(idx, {
+                                                  relationField: val || "id",
+                                                })
+                                              }
+                                              data={[
+                                                { label: "id (Primary Key)", value: "id" },
+                                                ...((
+                                                  collections.find(
+                                                    (c) => c.name === field.relationCollection
+                                                  )?.fields || []
+                                                ).map((tf) => ({
+                                                  label: `${tf.name} (${tf.type})`,
+                                                  value: tf.name,
+                                                }))),
+                                              ]}
+                                            />
+                                          </Grid.Col>
+                                        </Grid>
+                                        <Group justify="space-between" align="center">
+                                          <Checkbox
+                                            size="xs"
+                                            label="Allow multiple references (M:N)"
+                                            checked={Boolean(field.maxSelect && field.maxSelect > 1)}
+                                            onChange={(e) =>
+                                              updateField(idx, {
+                                                maxSelect: e.currentTarget.checked ? 10 : 1,
+                                              })
+                                            }
+                                          />
+                                          <Checkbox
+                                            size="xs"
+                                            label="Cascade delete"
+                                            checked={Boolean(field.cascadeDelete)}
+                                            onChange={(e) =>
+                                              updateField(idx, {
+                                                cascadeDelete: e.currentTarget.checked,
+                                              })
+                                            }
+                                          />
+                                        </Group>
+                                      </Stack>
+                                    </Paper>
                                   )}
 
                                   {/* URL-specific: pattern validation */}
@@ -5775,6 +5924,7 @@ export const CollectionsView: React.FC = () => {
         onClose={() => setCollectionsOverviewOpen(false)}
         collections={collections}
         onSelectCollection={handleSelectCollection}
+        onCollectionsChange={loadCollections}
       />
 
       {/* JSON Expand Modal */}

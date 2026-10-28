@@ -5,7 +5,10 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { requireSuperuser } from "./auth";
 import { getCollection, syncDatabaseCollections, initDefaultCollections, listCollections } from "./schema";
-import { db, DB_PATH, reopenDatabase } from "./db";
+import { db, DB_PATH, reopenDatabase, hashPassword } from "./db";
+import { evaluateRule, ruleToSqlWhere, formatRecordOutput, formatFieldValue } from "./crud";
+import { broadcastRecordEvent } from "./events";
+import { deleteRecordFiles } from "./files";
 import {
   getAllSettings,
   updateAllSettings,
@@ -81,7 +84,8 @@ export function getSystemTelemetry() {
 
   // Database and directory metrics
   const dataDir = process.env.DATA_DIR || path.resolve(process.cwd(), "data");
-  const uploadsDir = path.join(dataDir, "uploads");
+  const filesDir = path.join(dataDir, "files");
+  const legacyUploadsDir = path.join(dataDir, "uploads");
   const backupsDir = path.join(dataDir, "backups");
   const publicDir =
     process.env.PUBLIC_DIR || path.resolve(process.cwd(), "_public");
@@ -98,7 +102,7 @@ export function getSystemTelemetry() {
     }
   } catch {}
 
-  const uploadsSizeBytes = getDirSizeBytes(uploadsDir);
+  const uploadsSizeBytes = getDirSizeBytes(filesDir) + getDirSizeBytes(legacyUploadsDir);
   const backupsSizeBytes = getDirSizeBytes(backupsDir);
   const publicSizeBytes = getDirSizeBytes(publicDir);
   const hooksSizeBytes = getDirSizeBytes(hooksDir);
@@ -357,52 +361,163 @@ settingsRouter.post("/batch", async (req: Request, res: Response) => {
             continue;
           }
 
+          const tableName = col.name;
+          const isAuth = col.type === "auth" || col.name === "users";
+          const fields = col.fields || [];
+
+          if (col.name === "_superusers" && !auth?.isSuperuser) {
+            results.push({
+              status: 403,
+              index: i,
+              method,
+              url: rawUrl,
+              body: { error: "Superuser privileges required" },
+            });
+            continue;
+          }
+
           if (method === "POST") {
-            // Create record
+            if (!evaluateRule(col.rules?.create, auth, body)) {
+              results.push({
+                status: 403,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Access denied to create record" },
+              });
+              continue;
+            }
+
             const id = body.id || crypto.randomUUID();
             const now = new Date().toISOString();
-            const recordData: Record<string, any> = { id, created_at: now, updated_at: now };
-            const fields = col.fields || [];
+            const bodyData: Record<string, any> = { ...body };
 
+            if (bodyData.password && typeof bodyData.password === "string" && bodyData.password.trim() !== "") {
+              bodyData.password = hashPassword(bodyData.password);
+            } else if (isAuth) {
+              bodyData.password = hashPassword(crypto.randomBytes(16).toString("hex"));
+            }
+
+            const fieldNames = ['"id"', '"created_at"', '"updated_at"'];
+            const placeholders = ["?", "?", "?"];
+            const values: any[] = [id, now, now];
+
+            let missingRequired: string | null = null;
             for (const f of fields) {
-              if (body[f.name] !== undefined) {
-                recordData[f.name] = body[f.name];
+              if (f.required && (bodyData[f.name] === undefined || bodyData[f.name] === null || bodyData[f.name] === "")) {
+                missingRequired = f.name;
+                break;
+              }
+              if (bodyData[f.name] !== undefined) {
+                fieldNames.push(`"${f.name}"`);
+                placeholders.push("?");
+                values.push(formatFieldValue(f, bodyData[f.name]));
               }
             }
 
-            const keys = Object.keys(recordData);
-            const placeholders = keys.map(() => "?").join(", ");
-            const values = Object.values(recordData);
-            db.prepare(`INSERT INTO "${colName}" (${keys.map((k) => `"${k}"`).join(", ")}) VALUES (${placeholders})`).run(...values);
+            if (missingRequired) {
+              results.push({
+                status: 400,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: `Field '${missingRequired}' is required` },
+              });
+              continue;
+            }
+
+            db.prepare(`INSERT INTO "${tableName}" (${fieldNames.join(", ")}) VALUES (${placeholders.join(", ")})`).run(...values);
+            const inserted = db.prepare(`SELECT * FROM "${tableName}" WHERE id = ?`).get(id);
+            const formatted = formatRecordOutput(fields, inserted, auth, isAuth);
+            broadcastRecordEvent("create", tableName, formatted);
 
             results.push({
               status: 201,
               index: i,
               method,
               url: rawUrl,
-              body: recordData,
+              body: formatted,
             });
           } else if (method === "PATCH" && recordId) {
-            // Update record
-            const now = new Date().toISOString();
-            const updateKeys = Object.keys(body).filter((k) => k !== "id" && k !== "created_at");
-            if (updateKeys.length > 0) {
-              const setClauses = updateKeys.map((k) => `"${k}" = ?`).join(", ") + ', "updated_at" = ?';
-              const values = updateKeys.map((k) => body[k]);
-              values.push(now, recordId);
-              db.prepare(`UPDATE "${colName}" SET ${setClauses} WHERE id = ?`).run(...values);
+            const existing = db.prepare(`SELECT * FROM "${tableName}" WHERE id = ?`).get(recordId);
+            if (!existing) {
+              results.push({
+                status: 404,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Record not found" },
+              });
+              continue;
             }
-            const updatedRow = db.prepare(`SELECT * FROM "${colName}" WHERE id = ?`).get(recordId);
+            if (!evaluateRule(col.rules?.update, auth, existing)) {
+              results.push({
+                status: 403,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Access denied to update record" },
+              });
+              continue;
+            }
+
+            const now = new Date().toISOString();
+            const bodyData: Record<string, any> = { ...body };
+            if (bodyData.password !== undefined) {
+              if (bodyData.password && typeof bodyData.password === "string" && bodyData.password.trim() !== "") {
+                bodyData.password = hashPassword(bodyData.password);
+              } else {
+                delete bodyData.password;
+              }
+            }
+
+            const updates: string[] = ['"updated_at" = ?'];
+            const values: any[] = [now];
+            for (const f of fields) {
+              if (bodyData[f.name] !== undefined) {
+                updates.push(`"${f.name}" = ?`);
+                values.push(formatFieldValue(f, bodyData[f.name]));
+              }
+            }
+            values.push(recordId);
+            db.prepare(`UPDATE "${tableName}" SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+
+            const updatedRow = db.prepare(`SELECT * FROM "${tableName}" WHERE id = ?`).get(recordId);
+            const formatted = formatRecordOutput(fields, updatedRow, auth, isAuth);
+            broadcastRecordEvent("update", tableName, formatted);
             results.push({
               status: 200,
               index: i,
               method,
               url: rawUrl,
-              body: updatedRow,
+              body: formatted,
             });
           } else if (method === "DELETE" && recordId) {
-            // Delete record
-            db.prepare(`DELETE FROM "${colName}" WHERE id = ?`).run(recordId);
+            const existing = db.prepare(`SELECT * FROM "${tableName}" WHERE id = ?`).get(recordId);
+            if (!existing) {
+              results.push({
+                status: 404,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Record not found" },
+              });
+              continue;
+            }
+            if (!evaluateRule(col.rules?.delete, auth, existing)) {
+              results.push({
+                status: 403,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Access denied to delete record" },
+              });
+              continue;
+            }
+
+            db.prepare(`DELETE FROM "${tableName}" WHERE id = ?`).run(recordId);
+            deleteRecordFiles(tableName, recordId);
+            broadcastRecordEvent("delete", tableName, { id: recordId });
             results.push({
               status: 204,
               index: i,
@@ -411,24 +526,57 @@ settingsRouter.post("/batch", async (req: Request, res: Response) => {
               body: { success: true },
             });
           } else if (method === "GET" && recordId) {
-            // View single record
-            const row = db.prepare(`SELECT * FROM "${colName}" WHERE id = ?`).get(recordId);
-            results.push({
-              status: row ? 200 : 404,
-              index: i,
-              method,
-              url: rawUrl,
-              body: row || { error: "Record not found" },
-            });
-          } else {
-            // List records
-            const rows = db.prepare(`SELECT * FROM "${colName}" LIMIT 100`).all();
+            const row = db.prepare(`SELECT * FROM "${tableName}" WHERE id = ?`).get(recordId);
+            if (!row) {
+              results.push({
+                status: 404,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Record not found" },
+              });
+              continue;
+            }
+            if (!evaluateRule(col.rules?.view, auth, row)) {
+              results.push({
+                status: 403,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Access denied to view record" },
+              });
+              continue;
+            }
             results.push({
               status: 200,
               index: i,
               method,
               url: rawUrl,
-              body: { items: rows, total: rows.length },
+              body: formatRecordOutput(fields, row, auth, isAuth),
+            });
+          } else {
+            const ruleCheck = ruleToSqlWhere(col.rules?.list, auth);
+            if (!ruleCheck.allowed) {
+              results.push({
+                status: 403,
+                index: i,
+                method,
+                url: rawUrl,
+                body: { error: "Access denied to list collection" },
+              });
+              continue;
+            }
+            const whereClause = ruleCheck.sql ? `WHERE ${ruleCheck.sql}` : "";
+            const rows = db
+              .prepare(`SELECT * FROM "${tableName}" ${whereClause} LIMIT 100`)
+              .all(...(ruleCheck.params || []));
+            const formattedRows = rows.map((r: any) => formatRecordOutput(fields, r, auth, isAuth));
+            results.push({
+              status: 200,
+              index: i,
+              method,
+              url: rawUrl,
+              body: { items: formattedRows, total: formattedRows.length },
             });
           }
         } else {

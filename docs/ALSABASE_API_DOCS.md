@@ -248,6 +248,7 @@ Fetches the current schema and column definition of a specific table.
     "fields": [
       { "name": "title", "type": "text", "required": true },
       { "name": "slug", "type": "text", "unique": true },
+      { "name": "author", "type": "relation", "relationCollection": "users", "relationField": "id", "maxSelect": 1, "cascadeDelete": false },
       { "name": "published", "type": "bool", "defaultValue": true },
       { "name": "cover", "type": "file" }
     ],

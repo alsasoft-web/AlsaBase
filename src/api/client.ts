@@ -35,6 +35,8 @@ export interface FieldDef {
   protected?: boolean;
   values?: string[];
   relationCollection?: string;
+  relationField?: string;
+  cascadeDelete?: boolean;
   onCreate?: boolean;
   onUpdate?: boolean;
   system?: boolean;
@@ -449,6 +451,7 @@ export const api = {
       search?: string;
       sort?: string;
       filter?: string;
+      expand?: string;
     } = {},
   ) {
     const params = new URLSearchParams();
@@ -457,6 +460,7 @@ export const api = {
     if (query.search) params.set("search", query.search);
     if (query.sort) params.set("sort", query.sort);
     if (query.filter) params.set("filter", query.filter);
+    if (query.expand) params.set("expand", query.expand);
 
     return request<PaginatedResult<any>>(
       `/collections/${collectionName}/records?${params.toString()}`,
