@@ -608,11 +608,13 @@ const downloadUrl = ab.apps.getDownloadUrl("desktop-app", "1.2.0");
 ### Superuser Operations (Publishing & Managing Releases)
 
 ```typescript
-// 1. Create a new application
+// 1. Create a new application with PC device access limits
 const app = await ab.apps.createApp({
   name: "AlsaBase Desktop Client",
   slug: "desktop-app",
   description: "Official desktop client for macOS and Windows",
+  maxDevices: 5,                       // Limit the entire app to run on at most 5 PCs
+  devicePolicy: "max_devices",         // "unrestricted" | "max_devices" | "whitelist_only"
 });
 
 // 2. Upload and publish a new version release
