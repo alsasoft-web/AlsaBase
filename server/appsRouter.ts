@@ -758,23 +758,25 @@ appsRouter.post("/manage/versions", requireSuperuser, (req: Request, res: Respon
     const cleanImportance =
       importance === "automatic" || importance === "mandatory" ? "automatic" : "optional";
 
-    // Handle file upload
+    // Handle file upload (supports { file: { name, data, size } }, or direct fileBase64 / binary string)
     let savedFileName: string | null = null;
     let savedFilePath: string | null = null;
     let savedFileSize = 0;
     let savedFileHash: string | null = null;
 
-    if (file) {
-      let fileBuffer: Buffer | null = null;
-      let origName = "binary";
+    const incomingFile = file || req.body.fileBase64 || req.body.binary;
 
-      if (typeof file === "object" && file.data) {
-        origName = file.name || "binary";
-        const rawData = String(file.data);
+    if (incomingFile) {
+      let fileBuffer: Buffer | null = null;
+      let origName = req.body.fileName || "binary";
+
+      if (typeof incomingFile === "object" && incomingFile.data) {
+        origName = incomingFile.name || origName;
+        const rawData = String(incomingFile.data);
         const base64Data = rawData.includes(";base64,") ? rawData.split(";base64,")[1] : rawData;
         fileBuffer = Buffer.from(base64Data, "base64");
-      } else if (typeof file === "string" && (file.startsWith("data:") || file.length > 200)) {
-        const base64Data = file.includes(";base64,") ? file.split(";base64,")[1] : file;
+      } else if (typeof incomingFile === "string" && (incomingFile.startsWith("data:") || incomingFile.length > 200)) {
+        const base64Data = incomingFile.includes(";base64,") ? incomingFile.split(";base64,")[1] : incomingFile;
         fileBuffer = Buffer.from(base64Data, "base64");
       }
 

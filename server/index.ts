@@ -37,8 +37,8 @@ setupAutoBackupScheduler();
 
 // Standard Middlewares
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+app.use(express.json({ limit: "250mb" }));
+app.use(express.urlencoded({ extended: true, limit: "250mb" }));
 app.use(authMiddleware);
 app.use(requestLoggerMiddleware);
 app.use(rateLimitMiddleware);
@@ -103,6 +103,10 @@ app.use("/", staticHostingMiddleware());
 
 // Global Error Handler
 app.use(errorHandlerMiddleware);
+
+// Configure HTTP server timeouts for large file uploads (e.g., application releases)
+server.headersTimeout = 120_000;
+server.requestTimeout = 600_000;
 
 server.listen(PORT, () => {
   console.log(`=======================================================`);
