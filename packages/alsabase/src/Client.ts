@@ -8,7 +8,17 @@ import { LogService } from "./services/LogService";
 import { RealtimeService } from "./services/RealtimeService";
 import { FileService } from "./services/FileService";
 import { HooksService } from "./services/HooksService";
-import type { SendOptions, RecordModel, CollectionModel, CommonOptions } from "./types";
+import { AppsService } from "./services/AppsService";
+import type {
+  SendOptions,
+  RecordModel,
+  CollectionModel,
+  CommonOptions,
+  AppUpdateCheckOptions,
+  AppUpdateCheckResult,
+  AppReleaseEvent,
+  UnsubscribeFunc,
+} from "./types";
 
 export class AlsaBase {
   baseUrl: string;
@@ -20,6 +30,7 @@ export class AlsaBase {
   readonly realtime: RealtimeService;
   readonly files: FileService;
   readonly hooks: HooksService;
+  readonly apps: AppsService;
 
   private recordServices: Map<string, RecordService<any>> = new Map();
   private cancelControllers: Map<string, AbortController> = new Map();
@@ -39,6 +50,7 @@ export class AlsaBase {
     this.realtime = new RealtimeService(this);
     this.files = new FileService(this);
     this.hooks = new HooksService(this);
+    this.apps = new AppsService(this);
   }
 
   /**
@@ -46,6 +58,34 @@ export class AlsaBase {
    */
   get admins(): SuperuserService {
     return this.superusers;
+  }
+
+  /**
+   * Check if an update is available for a specific application.
+   * Compares the app's current version against published versions and evaluates
+   * platform and channel rules.
+   *
+   * @param appSlug App identifier/slug
+   * @param options Update check options (currentVersion, platform, channel)
+   */
+  async checkAppUpdate(
+    appSlug: string,
+    options: AppUpdateCheckOptions
+  ): Promise<AppUpdateCheckResult> {
+    return this.apps.checkUpdate(appSlug, options);
+  }
+
+  /**
+   * Listen for real-time app release events and new updates.
+   *
+   * @param appSlug App slug (or "*" for any application)
+   * @param callback Callback called whenever a new release is published
+   */
+  async onAppRelease(
+    appSlug: string,
+    callback: (event: AppReleaseEvent) => void
+  ): Promise<UnsubscribeFunc> {
+    return this.apps.onNewRelease(appSlug, callback);
   }
 
   /**

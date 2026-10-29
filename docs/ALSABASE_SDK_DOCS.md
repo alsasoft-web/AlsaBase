@@ -50,6 +50,7 @@ const ab = new AlsaBase("http://127.0.0.1:8090");
 7. [Realtime Subscriptions (WebSocket & SSE)](#7-realtime-subscriptions)
 8. [Logs & Server Telemetry](#8-logs--server-telemetry)
 9. [Serverless Hooks, Crons & Commands](#9-serverless-hooks-crons--commands)
+10. [App Releases & Version Control](#10-app-releases--version-control)
 
 ---
 
@@ -550,6 +551,130 @@ await ab.hooks.cancelCommand("cmd_123456", "seed:users");
 
 // 9. Hot-reload hooks without restarting the server
 await ab.hooks.reload();
+```
+
+---
+
+## 10. App Releases & Version Control
+
+AlsaBase provides a built-in application version control and auto-update system. You can publish release packages (.exe, .dmg, .apk, .zip, etc.), set update importance (`automatic` vs `optional`), link versions to specific user table column values (e.g. Alpha or Beta testers), and check for updates directly from client applications.
+
+### Check for App Updates
+
+```typescript
+// Check if an update is available for your desktop, mobile, or CLI app
+const update = await ab.checkAppUpdate("desktop-app", {
+  currentVersion: "1.0.0",
+  platform: "windows", // "windows" | "macos" | "linux" | "android" | "ios" | "web" | "all"
+  channel: "stable",  // optional: "stable" | "beta" | "alpha" | "latest"
+});
+
+if (update.hasUpdate) {
+  console.log("New version available:", update.latestVersion);
+  console.log("Release notes:", update.releaseNotes);
+
+  if (update.isAutomatic) {
+    // Automatic (Mandatory) update: download and install without prompting user
+    console.log("Automatic mandatory update required.");
+  } else {
+    // Optional update: prompt user with an update dialog
+    console.log("Optional update available.");
+  }
+
+  // Download URL for the binary installer / archive
+  console.log("Download URL:", update.downloadUrl);
+  // Full download URL including server base URL
+  console.log("Full Download URL:", update.version?.fullDownloadUrl);
+} else {
+  console.log("App is up to date.");
+}
+```
+
+### Realtime Auto-Detection of New Releases
+
+Listen for newly published releases in real time over WebSocket/SSE without polling:
+
+```typescript
+// Auto-detect updates for a specific application in real time
+const unsubscribe = await ab.onAppRelease("desktop-app", (event) => {
+  console.log("New version published:", event.release.version);
+  console.log("Importance:", event.release.importance); // "automatic" | "optional"
+  console.log("Download link:", event.release.downloadUrl);
+
+  if (event.release.isAutomatic) {
+    // Download and apply silently in background
+    triggerBackgroundUpdater(event.release.downloadUrl);
+  } else {
+    // Prompt the user to update
+    promptUserToUpdate(event.release);
+  }
+});
+
+// To stop listening:
+unsubscribe();
+
+// Alternatively, listen using apps service:
+// await ab.apps.onNewRelease("desktop-app", (event) => { ... });
+```
+
+### Accessing App Versions & Binaries
+
+```typescript
+// List all published versions eligible for the current user/device
+const versions = await ab.apps.getVersions("desktop-app", {
+  platform: "windows",
+});
+
+// Get a specific version details
+const version = await ab.apps.getVersion("desktop-app", "1.2.0");
+
+// Get direct download link for a version
+const downloadUrl = ab.apps.getDownloadUrl("desktop-app", "1.2.0");
+```
+
+### Superuser Operations (Publishing & Managing Releases)
+
+```typescript
+// 1. Create a new application with optional outgoing webhook URL
+const app = await ab.apps.createApp({
+  name: "AlsaBase Desktop Client",
+  slug: "desktop-app",
+  description: "Official desktop client for macOS and Windows",
+  webhookUrl: "https://api.example.com/webhooks/releases",
+  webhookSecret: "whsec_sample_secret_key",
+});
+
+// 2. Test outgoing webhook delivery
+await ab.apps.testWebhook("desktop-app");
+
+// 2. Upload and publish a new version release
+const release = await ab.apps.uploadVersion({
+  appSlug: "desktop-app",
+  version: "1.2.0",
+  buildNumber: 120,
+  importance: "automatic", // "automatic" (mandatory) or "optional"
+  channel: "beta",         // "stable" | "beta" | "alpha" | "latest"
+  platform: "windows",
+  releaseNotes: "### What's New\n- High performance database sync\n- Realtime connection improvements",
+  minOsVersion: "Windows 10",
+  isActive: true,
+
+  // File binary attachment (base64)
+  file: {
+    name: "AlsaBase-Setup-1.2.0.exe",
+    data: "data:application/octet-stream;base64,TVqQAAMAAAAEAAAA...",
+    size: 24500000,
+  },
+});
+
+// 3. Update version metadata
+await ab.apps.updateVersion(release.id, {
+  importance: "optional",
+  isActive: true,
+});
+
+// 4. Delete version and its storage file
+await ab.apps.deleteVersion(release.id);
 ```
 
 ---

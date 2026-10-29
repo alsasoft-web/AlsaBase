@@ -19,6 +19,7 @@ import { settingsRouter, backupsRouter } from "./settingsRouter";
 import { rateLimitMiddleware } from "./settings";
 import { setupAutoBackupScheduler } from "./backups";
 import { filesRouter } from "./files";
+import { appsRouter } from "./appsRouter";
 
 const app = express();
 const server = http.createServer(app);
@@ -59,6 +60,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/auth", authRouter);
 app.use("/api/collections", collectionsRouter);
 app.use("/api/files", filesRouter);
+app.use("/api/apps", appsRouter);
 app.use("/api/hooks", hooksRouter);
 app.use("/api/logs", logsRouter);
 app.use("/api/static-files", staticRouter);

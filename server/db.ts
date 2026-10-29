@@ -105,6 +105,44 @@ export function initSystemTables() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS _apps (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      description TEXT,
+      icon_url TEXT,
+      webhook_url TEXT,
+      webhook_secret TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS _app_releases (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      app_slug TEXT NOT NULL,
+      version TEXT NOT NULL,
+      build_number INTEGER DEFAULT 1,
+      importance TEXT NOT NULL DEFAULT 'optional',
+      channel TEXT DEFAULT 'latest',
+      target_collection TEXT,
+      target_column TEXT,
+      target_value TEXT,
+      target_operator TEXT DEFAULT '=',
+      platform TEXT DEFAULT 'all',
+      file_name TEXT,
+      file_path TEXT,
+      file_size INTEGER DEFAULT 0,
+      file_hash TEXT,
+      release_notes TEXT,
+      min_os_version TEXT,
+      is_active INTEGER DEFAULT 1,
+      download_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (app_id) REFERENCES _apps(id) ON DELETE CASCADE
+    );
+
     -- Performance Indexes
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON _logs(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_logs_level ON _logs(level);
@@ -113,7 +151,19 @@ export function initSystemTables() {
     CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON _auth_tokens(token);
     CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON _auth_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_crons_name ON _crons(name);
+    CREATE INDEX IF NOT EXISTS idx_apps_slug ON _apps(slug);
+    CREATE INDEX IF NOT EXISTS idx_app_releases_app_id ON _app_releases(app_id);
+    CREATE INDEX IF NOT EXISTS idx_app_releases_app_slug ON _app_releases(app_slug);
+    CREATE INDEX IF NOT EXISTS idx_app_releases_version ON _app_releases(version);
+    CREATE INDEX IF NOT EXISTS idx_app_releases_channel ON _app_releases(channel);
   `);
+
+  try {
+    db.prepare("ALTER TABLE _apps ADD COLUMN webhook_url TEXT").run();
+  } catch {}
+  try {
+    db.prepare("ALTER TABLE _apps ADD COLUMN webhook_secret TEXT").run();
+  } catch {}
 }
 
 // Ensure system tables are ready on load

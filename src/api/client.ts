@@ -216,6 +216,62 @@ export interface PaginatedResult<T> {
   items: T[];
 }
 
+export interface AppItem {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  iconUrl?: string | null;
+  webhookUrl?: string | null;
+  webhookSecret?: string | null;
+  totalReleases: number;
+  totalDownloads: number;
+  totalStorageBytes?: number;
+  latestVersion?: string | null;
+  latestImportance?: string | null;
+  latestChannel?: string | null;
+  latestReleaseAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppVersionItem {
+  id: string;
+  appId: string;
+  appSlug: string;
+  version: string;
+  buildNumber: number;
+  importance: "automatic" | "optional";
+  isAutomatic: boolean;
+  isMandatory: boolean;
+  channel: string;
+  platform: string;
+  fileName?: string | null;
+  fileSize: number;
+  fileHash?: string | null;
+  downloadUrl: string;
+  fullDownloadUrl?: string;
+  releaseNotes?: string | null;
+  minOsVersion?: string | null;
+  isActive: boolean;
+  downloadCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppUpdateCheckResult {
+  updateAvailable: boolean;
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  importance: "automatic" | "optional" | null;
+  isAutomatic: boolean;
+  isMandatory: boolean;
+  releaseNotes?: string | null;
+  downloadUrl?: string | null;
+  version?: AppVersionItem | null;
+}
+
 const API_BASE = "/api";
 
 function getAuthHeader(): Record<string, string> {
@@ -982,6 +1038,118 @@ export const api = {
         "/realtime/status",
       );
     },
+  },
+
+  // Apps & Releases
+  async getApps() {
+    return request<{ items: AppItem[]; total: number }>("/apps/manage/apps");
+  },
+
+  async createApp(data: {
+    name: string;
+    slug?: string;
+    description?: string;
+    iconUrl?: string;
+    iconFile?: { name: string; data: string; size?: number; type?: string } | string;
+    webhookUrl?: string;
+    webhookSecret?: string;
+  }) {
+    return request<AppItem>("/apps/manage/apps", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async updateApp(
+    id: string,
+    data: {
+      name?: string;
+      slug?: string;
+      description?: string;
+      iconUrl?: string;
+      iconFile?: { name: string; data: string; size?: number; type?: string } | string;
+      webhookUrl?: string;
+      webhookSecret?: string;
+    },
+  ) {
+    return request<AppItem>(`/apps/manage/apps/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  async testAppWebhook(id: string) {
+    return request<{ success: boolean; statusCode?: number; message?: string }>(
+      `/apps/manage/apps/${id}/test-webhook`,
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  async deleteApp(id: string) {
+    return request<{ success: boolean; message: string }>(
+      `/apps/manage/apps/${id}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  async getAppVersions(appIdOrSlug?: string) {
+    const qs = appIdOrSlug ? `?appId=${encodeURIComponent(appIdOrSlug)}` : "";
+    return request<{ items: AppVersionItem[]; total: number }>(
+      `/apps/manage/versions${qs}`,
+    );
+  },
+
+  async uploadAppVersion(payload: {
+    appId?: string;
+    appSlug?: string;
+    appName?: string;
+    version: string;
+    buildNumber?: number;
+    importance?: "automatic" | "mandatory" | "optional";
+    channel?: string;
+    platform?: string;
+    releaseNotes?: string;
+    minOsVersion?: string;
+    isActive?: boolean;
+    file?: { name: string; data: string; size?: number; type?: string };
+  }) {
+    return request<AppVersionItem>("/apps/manage/versions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateAppVersion(id: string, payload: Partial<AppVersionItem>) {
+    return request<AppVersionItem>(`/apps/manage/versions/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteAppVersion(id: string) {
+    return request<{ success: boolean; message: string }>(
+      `/apps/manage/versions/${id}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  async checkAppUpdate(
+    appSlug: string,
+    params: { currentVersion: string; platform?: string; channel?: string },
+  ) {
+    const searchParams = new URLSearchParams();
+    if (params.currentVersion) searchParams.append("currentVersion", params.currentVersion);
+    if (params.platform) searchParams.append("platform", params.platform);
+    if (params.channel) searchParams.append("channel", params.channel);
+    return request<AppUpdateCheckResult>(
+      `/apps/${encodeURIComponent(appSlug)}/check-update?${searchParams.toString()}`,
+    );
   },
 };
 

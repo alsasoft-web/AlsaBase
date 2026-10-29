@@ -348,3 +348,98 @@ export interface SystemStats {
   };
 }
 
+export interface AppModel {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  iconUrl?: string | null;
+  webhookUrl?: string | null;
+  webhookSecret?: string | null;
+  totalReleases?: number;
+  totalDownloads?: number;
+  latestVersion?: string | null;
+  latestImportance?: string | null;
+  latestChannel?: string | null;
+  latestReleaseAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AppReleaseEvent {
+  event: "app.release.created" | "app.release.test" | "new_release";
+  app: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  release: AppVersionModel;
+  timestamp: string;
+}
+
+export interface AppVersionModel {
+  id: string;
+  appId: string;
+  appSlug: string;
+  version: string;
+  buildNumber: number;
+  importance: "automatic" | "optional";
+  isAutomatic: boolean;
+  isMandatory: boolean;
+  channel: string;
+  platform: string;
+  fileName?: string | null;
+  fileSize: number;
+  fileHash?: string | null;
+  downloadUrl: string;
+  fullDownloadUrl?: string;
+  releaseNotes?: string | null;
+  minOsVersion?: string | null;
+  isActive: boolean;
+  downloadCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppUpdateCheckOptions extends CommonOptions {
+  currentVersion: string;
+  platform?: string;
+  channel?: string;
+}
+
+export interface AppUpdateCheckResult {
+  updateAvailable: boolean;
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  importance: "automatic" | "optional" | null;
+  isAutomatic: boolean;
+  isMandatory: boolean;
+  releaseNotes?: string | null;
+  downloadUrl?: string | null;
+  version?: AppVersionModel | null;
+}
+
+export interface AppVersionUploadOptions extends CommonOptions {
+  appId?: string;
+  appSlug?: string;
+  appName?: string;
+  version: string;
+  buildNumber?: number;
+  importance?: "automatic" | "mandatory" | "optional";
+  channel?: string;
+  platform?: string;
+  releaseNotes?: string;
+  minOsVersion?: string;
+  isActive?: boolean;
+  file?:
+    | {
+        name: string;
+        data: string;
+        size?: number;
+        type?: string;
+      }
+    | string;
+}
+
+

@@ -17,6 +17,7 @@ export { LogService } from "./services/LogService";
 export { RealtimeService } from "./services/RealtimeService";
 export { FileService } from "./services/FileService";
 export { HooksService } from "./services/HooksService";
+export { AppsService } from "./services/AppsService";
 
 // Types
 export * from "./types";

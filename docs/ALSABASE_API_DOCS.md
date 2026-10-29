@@ -18,7 +18,8 @@ Complete API endpoint reference for **AlsaBase** — the lightweight, batteries-
 8. [Serverless Hooks & Crons](#8-serverless-hooks--crons)
 9. [Server Logs & Telemetry](#9-server-logs--telemetry)
 10. [Settings & Backups](#10-settings--backups)
-11. [Client SDK Quickstart](#11-client-sdk-quickstart)
+11. [App Releases & Version Control](#11-app-releases--version-control)
+12. [Client SDK Quickstart](#12-client-sdk-quickstart)
 
 ---
 
@@ -534,7 +535,200 @@ Cancels a running CLI script or hook command process.
 
 ---
 
-## 11. Client SDK Quickstart
+## 11. App Releases & Version Control
+
+AlsaBase includes an application release management and distribution system for desktop, mobile, and CLI applications. It supports version checking (semver), automated/mandatory vs optional update policies, release channels (e.g. stable, beta, alpha), platform filtering, and binary distribution.
+
+### 🌐 Public & Client Endpoints
+
+#### `GET /api/apps`
+Lists active applications with basic statistics.
+
+#### `GET /api/apps/:slug`
+Gets metadata for a specific application by its slug or ID.
+
+#### `GET /api/apps/:slug/check-update`
+Checks if a newer release is available for an app.
+
+- **Query Parameters**:
+  - `currentVersion` (string, required): Current installed version (e.g. `1.0.0`).
+  - `platform` (string, optional): Target platform (`windows`, `macos`, `linux`, `android`, `ios`, `all`).
+  - `channel` (string, optional): Release channel filter (`stable`, `beta`, `alpha`, `latest`).
+- **Response**: `200 OK`
+  ```json
+  {
+    "updateAvailable": true,
+    "hasUpdate": true,
+    "currentVersion": "1.0.0",
+    "latestVersion": "1.2.0",
+    "importance": "automatic",
+    "isAutomatic": true,
+    "isMandatory": true,
+    "releaseNotes": "Critical security fixes and performance updates",
+    "downloadUrl": "/api/apps/desktop-app/versions/1.2.0/download",
+    "version": {
+      "id": "rel_abc123",
+      "version": "1.2.0",
+      "buildNumber": 12,
+      "importance": "automatic",
+      "channel": "stable",
+      "platform": "windows",
+      "fileName": "Setup-1.2.0.exe",
+      "fileSize": 25481920,
+      "fileHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloadUrl": "/api/apps/desktop-app/versions/1.2.0/download",
+      "fullDownloadUrl": "http://127.0.0.1:8090/api/apps/desktop-app/versions/1.2.0/download",
+      "createdAt": "2026-10-29T00:00:00.000Z"
+    }
+  }
+  ```
+
+#### `GET /api/apps/:slug/versions`
+Lists all releases for the application.
+
+#### `GET /api/apps/:slug/versions/:version`
+Returns metadata for a specific release version.
+
+#### `GET /api/apps/:slug/versions/:version/download`
+Downloads the binary installer or archive file directly. Automatically increments the release `download_count`.
+
+---
+
+### 👑 Superuser Management Endpoints (`/api/apps/manage/...`)
+
+All management endpoints require a valid Superuser JWT (`Authorization: Bearer <token>`).
+
+#### `GET /api/apps/manage/apps`
+Lists all registered apps with version counts, total storage usage, and download numbers.
+
+#### `POST /api/apps/manage/apps`
+Registers a new application.
+- **Body**:
+  ```json
+  {
+    "name": "Desktop Client",
+    "slug": "desktop-client",
+    "description": "Cross-platform desktop application",
+    "iconUrl": "https://example.com/icon.png",
+    "webhookUrl": "https://api.example.com/webhooks/releases",
+    "webhookSecret": "whsec_sample_secret_key"
+  }
+  ```
+
+#### `PUT /api/apps/manage/apps/:id`
+Updates application metadata, icon, or webhook configuration.
+- **Body**:
+  ```json
+  {
+    "name": "Desktop Client",
+    "slug": "desktop-client",
+    "description": "Updated description",
+    "webhookUrl": "https://api.example.com/webhooks/releases",
+    "webhookSecret": "whsec_updated_secret"
+  }
+  ```
+
+#### `POST /api/apps/manage/apps/:id/test-webhook`
+Triggers a test webhook dispatch to verify receiver endpoint connectivity and HMAC signature validation.
+- **Response**: `200 OK`
+  ```json
+  {
+    "success": true,
+    "statusCode": 200,
+    "message": "Webhook sent and acknowledged successfully (HTTP 200)"
+  }
+  ```
+
+#### `DELETE /api/apps/manage/apps/:id`
+Deletes an application, all its releases, and all physical binary files from disk.
+
+#### `GET /api/apps/manage/versions`
+Lists releases across all applications, with optional `?appId=...` filter.
+
+#### `POST /api/apps/manage/versions`
+Uploads and publishes a new release version with an attached binary package.
+- **Body**:
+  ```json
+  {
+    "appSlug": "desktop-client",
+    "version": "1.2.0",
+    "buildNumber": 102,
+    "importance": "automatic",
+    "channel": "beta",
+    "platform": "windows",
+    "releaseNotes": "### What's New\n- Beta feature release",
+    "minOsVersion": "Windows 10",
+    "isActive": true,
+    "file": {
+      "name": "Desktop-Setup-1.2.0.exe",
+      "data": "TVqQAAMAAAAEAAAA...",
+      "size": 24500000,
+      "type": "application/x-msdownload"
+    }
+  }
+  ```
+
+#### `PUT /api/apps/manage/versions/:id`
+Updates release metadata (importance, channel, active status, release notes).
+
+#### `DELETE /api/apps/manage/versions/:id`
+Deletes a release record and removes its physical binary file from storage.
+
+---
+
+### Outgoing Release Webhooks
+
+When an application has a configured `webhook_url`, publishing a new version or triggering a test webhook sends an HTTP POST request:
+
+- **Headers**:
+  - `Content-Type: application/json`
+  - `User-Agent: AlsaBase-App-Webhook/1.0`
+  - `X-AlsaBase-Event: app.release.created` (or `app.release.test`)
+  - `X-AlsaBase-App: <app-slug>`
+  - `X-AlsaBase-Signature: sha256=<hex_hash>` (if `webhook_secret` is configured, computed as `crypto.createHmac("sha256", secret).update(JSON.stringify(payload)).digest("hex")`)
+
+- **Payload Structure**:
+  ```json
+  {
+    "event": "app.release.created",
+    "app": {
+      "id": "app_123456",
+      "name": "Desktop Client",
+      "slug": "desktop-client"
+    },
+    "release": {
+      "id": "rel_abc123",
+      "version": "1.2.0",
+      "buildNumber": 120,
+      "importance": "automatic",
+      "channel": "stable",
+      "platform": "windows",
+      "fileName": "Setup-1.2.0.exe",
+      "fileSize": 25481920,
+      "downloadUrl": "/api/apps/desktop-client/versions/1.2.0/download",
+      "fullDownloadUrl": "http://127.0.0.1:8090/api/apps/desktop-client/versions/1.2.0/download",
+      "releaseNotes": "Bug fixes and improvements",
+      "createdAt": "2026-10-29T00:00:00.000Z"
+    },
+    "timestamp": "2026-10-29T00:00:00.000Z"
+  }
+  ```
+
+---
+
+### Realtime Release Auto-Detection
+
+Whenever a new version is published, AlsaBase broadcasts an event across its realtime event bus (WebSocket, SSE, and Socket.IO):
+
+- **Topics**:
+  - `apps/<app-slug>`: scoped to a specific app.
+  - `apps`: global topic for all applications.
+- **Event Name**: `new_release`
+- **Data Payload**: Same structure as the webhook payload above.
+
+---
+
+## 12. Client SDK Quickstart
 
 Connect directly via the official `alsabase` package:
 

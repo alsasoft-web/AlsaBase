@@ -14,6 +14,7 @@ import {
   IconTerminal2,
   IconWorld,
   IconSettings,
+  IconRocket,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
 } from "@tabler/icons-react";
@@ -52,6 +53,11 @@ export const navItems: NavItem[] = [
     id: "public",
     label: "Static Hosting",
     icon: <IconWorld size={19} />,
+  },
+  {
+    id: "apps",
+    label: "App Releases",
+    icon: <IconRocket size={19} />,
   },
   {
     id: "settings",

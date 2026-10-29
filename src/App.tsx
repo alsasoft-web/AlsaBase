@@ -14,6 +14,7 @@ import { HooksView } from "./components/views/HooksView";
 import { LogsView } from "./components/views/LogsView";
 import { StaticHostingView } from "./components/views/StaticHostingView";
 import { SettingsView } from "./components/views/SettingsView";
+import { AppsView } from "./components/views/AppsView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Logo } from "./components/Logo";
 
@@ -22,6 +23,7 @@ const VALID_TABS = [
   "hooks",
   "logs",
   "public",
+  "apps",
   "settings",
 ] as const;
 type TabType = (typeof VALID_TABS)[number];
@@ -31,6 +33,7 @@ const TAB_TITLES: Record<TabType, string> = {
   hooks: "Hooks",
   logs: "Logs & Traces",
   public: "Static Hosting",
+  apps: "App Releases",
   settings: "Settings & Backups",
 };
 
@@ -38,6 +41,7 @@ function getTabFromPath(pathname: string): TabType | null {
   const clean = pathname.replace(/^\/_/, "").replace(/^\//, "");
   const firstSegment = clean.split("/")[0]?.toLowerCase();
   if (firstSegment === "static") return "public";
+  if (firstSegment === "app" || firstSegment === "releases") return "apps";
   if (VALID_TABS.includes(firstSegment as any)) {
     return firstSegment as TabType;
   }
@@ -327,6 +331,7 @@ export default function App() {
               {activeTab === "hooks" && <HooksView />}
               {activeTab === "logs" && <LogsView />}
               {activeTab === "public" && <StaticHostingView />}
+              {activeTab === "apps" && <AppsView />}
               {activeTab === "settings" && <SettingsView />}
             </ErrorBoundary>
           </AppShell.Main>

@@ -13,6 +13,7 @@ AlsaBase is a self-hosted backend engine built with Node.js, Express, and embedd
 - **Realtime Engine**: Live record changes (create, update, delete) and custom topics broadcasted over WebSocket and Server-Sent Events (SSE).
 - **Serverless Hooks System**: Extensible backend logic in `_hooks/` with automatic route loading, cron scheduler, and custom CLI command runners.
 - **Static Website Hosting**: Built-in asset and Single Page Application (SPA) hosting from the `_public/` directory at the root URL.
+- **App Releases & Version Control**: Manage desktop/mobile application versions, upload binary packages (.exe, .dmg, .apk, .zip), configure update policies (automatic/mandatory vs optional), and restrict release access by specific table column values (e.g. Alpha or Beta testers).
 - **Official Client SDK**: Full-featured, type-safe client library published under `alsabase` (`packages/alsabase`).
 - **Modern Admin Dashboard**: Built with React and Mantine, accessible at `http://localhost:8090/_/`.
 
@@ -107,6 +108,7 @@ The administrative interface is served at `/_/`:
 
 - **Collections**: Manage table schemas, field types, constraints, and permission rules.
 - **Records**: Search, filter, edit, and inspect table records.
+- **App Releases**: Full application version control, release binary uploads, automatic vs optional update rules, release channels, platform filters, and interactive update simulator.
 - **Serverless Hooks**: Inspect active hooks, register custom routes, trigger cron jobs manually, and run custom CLI commands with live terminal output.
 - **Logs & Metrics**: Real-time server access and error logs with execution durations, stack traces, and hourly timeline charts.
 - **Static Files & Hosting**: Browse and manage files served from `_public/`.
@@ -167,6 +169,56 @@ Any file or directory placed in `_public/` is served directly at the server root
 - `_public/test/index.html` -> `http://localhost:8090/test/`
 
 Nested directories containing an `index.html` file are resolved automatically when requested with or without a trailing slash.
+
+---
+
+## App Releases & Version Control
+
+AlsaBase provides a native version control and release distribution engine for client apps (Desktop, Mobile, CLI, Web):
+
+- **Update Importance**: Configure releases as **Automatic (Mandatory)** (installs silently / does not ask the user) or **Optional** (prompts the user with release notes).
+- **Channels & Platforms**: Segment releases by channels (e.g. `stable`, `beta`, `alpha`, `nightly`) and target operating systems (`windows`, `macos`, `linux`, `android`, `ios`).
+- **Binary Storage**: Attach installers and packages (`.exe`, `.dmg`, `.apk`, `.zip`, `.tar.gz`, `.msi`) with automatic SHA-256 checksum calculation and download counting.
+- **REST APIs & SDK Support**: Check for updates and download packages with simple API calls or SDK methods.
+
+```typescript
+import AlsaBase from "alsabase";
+
+const client = new AlsaBase("http://127.0.0.1:8090");
+
+// Check for updates from your desktop or mobile app
+const update = await client.checkAppUpdate("desktop-app", {
+  currentVersion: "1.0.0",
+  platform: "windows",
+});
+
+if (update.hasUpdate) {
+  console.log(`Update to ${update.latestVersion} available!`);
+
+  if (update.isAutomatic) {
+    // Automatic / mandatory: apply immediately without asking user
+    console.log("Automatic update - proceeding silently...");
+  } else {
+    // Optional: prompt user
+    console.log("Release notes:", update.releaseNotes);
+  }
+
+  console.log("Download URL:", update.downloadUrl);
+}
+
+// Auto-detect new releases in real time using WebSocket / SSE
+const unsubscribe = await client.onAppRelease("desktop-app", (event) => {
+  console.log("New version auto-detected:", event.release.version);
+  console.log("Importance:", event.release.importance);
+  console.log("Download URL:", event.release.downloadUrl);
+});
+```
+
+### Outgoing Webhooks
+
+Applications can configure an outgoing Webhook URL and Secret Key. Whenever a release is published:
+- An HTTP POST request is sent to the configured endpoint with an `app.release.created` payload.
+- If configured, an HMAC-SHA256 signature is included in the `X-AlsaBase-Signature` header for cryptographic payload verification.
 
 ---
 
