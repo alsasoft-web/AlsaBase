@@ -44,12 +44,19 @@ import {
   IconTerminal2,
   IconPhoto,
   IconArrowLeft,
+  IconKey,
+  IconDeviceDesktop,
+  IconLock,
+  IconLockOpen,
+  IconBan,
 } from "@tabler/icons-react";
 import {
   api,
   AppItem,
   AppVersionItem,
   AppUpdateCheckResult,
+  AppLicenseItem,
+  AppDeviceItem,
 } from "../../api/client";
 import { openHoldToConfirmModal } from "../HoldToConfirmModal";
 
@@ -57,18 +64,29 @@ export const AppsView: React.FC = () => {
   const isMobile = useMediaQuery("(max-width: 768px)");
   const [mobileShowList, setMobileShowList] = useState(false);
 
+  // Active tab in selected app dashboard
+  const [activeTab, setActiveTab] = useState<string>("releases");
+
   // Data states
   const [apps, setApps] = useState<AppItem[]>([]);
   const [selectedApp, setSelectedApp] = useState<AppItem | null>(null);
   const [versions, setVersions] = useState<AppVersionItem[]>([]);
+  const [licenses, setLicenses] = useState<AppLicenseItem[]>([]);
+  const [devices, setDevices] = useState<AppDeviceItem[]>([]);
   const [loadingApps, setLoadingApps] = useState(false);
   const [loadingVersions, setLoadingVersions] = useState(false);
+  const [loadingLicenses, setLoadingLicenses] = useState(false);
+  const [loadingDevices, setLoadingDevices] = useState(false);
 
   // Search & filter
   const [appSearch, setAppSearch] = useState("");
   const [versionSearch, setVersionSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState<string | null>("all");
   const [channelFilter, setChannelFilter] = useState<string | null>("all");
+  const [licenseSearch, setLicenseSearch] = useState("");
+  const [licenseStatusFilter, setLicenseStatusFilter] = useState<string | null>("all");
+  const [deviceSearch, setDeviceSearch] = useState("");
+  const [deviceLockedFilter, setDeviceLockedFilter] = useState<string | null>("all");
 
   // Create/Edit App Modal
   const [isAppModalOpen, setIsAppModalOpen] = useState(false);
@@ -80,6 +98,8 @@ export const AppsView: React.FC = () => {
   const [appIconFile, setAppIconFile] = useState<File | null>(null);
   const [appIconBase64, setAppIconBase64] = useState<string>("");
   const [appIconMode, setAppIconMode] = useState<"upload" | "url">("upload");
+  const [appDevicePolicy, setAppDevicePolicy] = useState<"unrestricted" | "max_devices" | "whitelist_only">("unrestricted");
+  const [appMaxDevices, setAppMaxDevices] = useState<number>(3);
   const [savingApp, setSavingApp] = useState(false);
 
   // Upload/Edit Version Modal
@@ -99,12 +119,33 @@ export const AppsView: React.FC = () => {
   const [fileBase64, setFileBase64] = useState<string>("");
   const [uploadingVersion, setUploadingVersion] = useState(false);
 
+  // Create Licenses Modal
+  const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
+  const [licCount, setLicCount] = useState<number>(1);
+  const [licCustomKey, setLicCustomKey] = useState("");
+  const [licFormat, setLicFormat] = useState("XXXX-XXXX-XXXX-XXXX");
+  const [licMaxActivations, setLicMaxActivations] = useState<number>(1);
+  const [licExpiresAt, setLicExpiresAt] = useState("");
+  const [licCustomerName, setLicCustomerName] = useState("");
+  const [licCustomerEmail, setLicCustomerEmail] = useState("");
+  const [licNotes, setLicNotes] = useState("");
+  const [savingLicenses, setSavingLicenses] = useState(false);
+
+  // Lock Device Modal
+  const [isLockModalOpen, setIsLockModalOpen] = useState(false);
+  const [lockDeviceId, setLockDeviceId] = useState("");
+  const [lockDeviceName, setLockDeviceName] = useState("");
+  const [lockReason, setLockReason] = useState("");
+  const [savingLock, setSavingLock] = useState(false);
+
   // Simulator / SDK Modal
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [simCurrentVersion, setSimCurrentVersion] = useState("1.0.0");
   const [simPlatform, setSimPlatform] = useState("windows");
   const [simChannel, setSimChannel] = useState("");
+  const [simDeviceId, setSimDeviceId] = useState("");
   const [simResult, setSimResult] = useState<AppUpdateCheckResult | null>(null);
+  const [simDeviceCheckResult, setSimDeviceCheckResult] = useState<{ allowed: boolean; isLocked: boolean; lockReason?: string | null } | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
@@ -165,9 +206,77 @@ export const AppsView: React.FC = () => {
     }
   };
 
+  // Load Licenses when selectedApp changes or filters change
+  const loadLicenses = async () => {
+    if (!selectedApp) {
+      setLicenses([]);
+      return;
+    }
+    setLoadingLicenses(true);
+    try {
+      const res = await api.getAppLicenses(selectedApp.id, {
+        search: licenseSearch.trim() || undefined,
+        status: licenseStatusFilter && licenseStatusFilter !== "all" ? licenseStatusFilter : undefined,
+      });
+      setLicenses(res.items || []);
+    } catch (err: any) {
+      notifications.show({
+        title: "Error loading licenses",
+        message: err.message,
+        color: "red",
+      });
+    } finally {
+      setLoadingLicenses(false);
+    }
+  };
+
+  // Load Devices when selectedApp changes or filters change
+  const loadDevices = async () => {
+    if (!selectedApp) {
+      setDevices([]);
+      return;
+    }
+    setLoadingDevices(true);
+    try {
+      const isLockedParam =
+        deviceLockedFilter === "locked"
+          ? true
+          : deviceLockedFilter === "allowed"
+          ? false
+          : undefined;
+      const res = await api.getAppDevices(selectedApp.id, {
+        search: deviceSearch.trim() || undefined,
+        isLocked: isLockedParam,
+      });
+      setDevices(res.items || []);
+    } catch (err: any) {
+      notifications.show({
+        title: "Error loading devices",
+        message: err.message,
+        color: "red",
+      });
+    } finally {
+      setLoadingDevices(false);
+    }
+  };
+
   useEffect(() => {
     loadVersions();
+    loadLicenses();
+    loadDevices();
   }, [selectedApp?.id]);
+
+  useEffect(() => {
+    if (selectedApp) {
+      loadLicenses();
+    }
+  }, [licenseSearch, licenseStatusFilter]);
+
+  useEffect(() => {
+    if (selectedApp) {
+      loadDevices();
+    }
+  }, [deviceSearch, deviceLockedFilter]);
 
   // Handle App Slug generation
   const handleAppNameChange = (val: string) => {
@@ -194,6 +303,8 @@ export const AppsView: React.FC = () => {
       setAppIconFile(null);
       setAppIconBase64("");
       setAppIconMode(appToEdit.iconUrl?.startsWith("http") ? "url" : "upload");
+      setAppDevicePolicy(appToEdit.devicePolicy || "unrestricted");
+      setAppMaxDevices(appToEdit.maxDevices || 3);
     } else {
       setEditingApp(null);
       setAppName("");
@@ -203,6 +314,8 @@ export const AppsView: React.FC = () => {
       setAppIconFile(null);
       setAppIconBase64("");
       setAppIconMode("upload");
+      setAppDevicePolicy("unrestricted");
+      setAppMaxDevices(3);
     }
     setIsAppModalOpen(true);
   };
@@ -258,6 +371,8 @@ export const AppsView: React.FC = () => {
           description: appDescription.trim(),
           iconUrl: resolvedIconUrl,
           iconFile: iconPayload,
+          devicePolicy: appDevicePolicy,
+          maxDevices: appDevicePolicy === "max_devices" ? appMaxDevices : null,
         });
         notifications.show({
           title: "App updated",
@@ -274,6 +389,8 @@ export const AppsView: React.FC = () => {
           description: appDescription.trim(),
           iconUrl: resolvedIconUrl,
           iconFile: iconPayload,
+          devicePolicy: appDevicePolicy,
+          maxDevices: appDevicePolicy === "max_devices" ? appMaxDevices : null,
         });
         notifications.show({
           title: "App created",
@@ -506,10 +623,226 @@ export const AppsView: React.FC = () => {
     }
   };
 
+  // Licenses Handlers
+  const openCreateLicenseModal = () => {
+    setLicCount(1);
+    setLicCustomKey("");
+    setLicFormat("XXXX-XXXX-XXXX-XXXX");
+    setLicMaxActivations(1);
+    setLicExpiresAt("");
+    setLicCustomerName("");
+    setLicCustomerEmail("");
+    setLicNotes("");
+    setIsLicenseModalOpen(true);
+  };
+
+  const handleCreateLicensesSubmit = async () => {
+    if (!selectedApp) return;
+    setSavingLicenses(true);
+    try {
+      const res = await api.createAppLicenses({
+        appId: selectedApp.id,
+        count: licCount,
+        serialKey: licCount === 1 && licCustomKey.trim() ? licCustomKey.trim() : undefined,
+        format: licFormat.trim() || undefined,
+        maxActivations: licMaxActivations,
+        expiresAt: licExpiresAt ? new Date(licExpiresAt).toISOString() : undefined,
+        customerName: licCustomerName.trim() || undefined,
+        customerEmail: licCustomerEmail.trim() || undefined,
+        notes: licNotes.trim() || undefined,
+      });
+
+      notifications.show({
+        title: "License keys generated",
+        message: `Successfully generated ${res.createdCount} license key(s)`,
+        color: "teal",
+      });
+
+      setIsLicenseModalOpen(false);
+      loadLicenses();
+      loadApps(selectedApp.id);
+    } catch (err: any) {
+      notifications.show({
+        title: "Error creating license",
+        message: err.message,
+        color: "red",
+      });
+    } finally {
+      setSavingLicenses(false);
+    }
+  };
+
+  const handleToggleLicenseRevoke = async (lic: AppLicenseItem) => {
+    try {
+      const nextStatus = lic.status === "active" ? "revoked" : "active";
+      await api.updateAppLicense(lic.id, { status: nextStatus });
+      setLicenses((prev) =>
+        prev.map((item) => (item.id === lic.id ? { ...item, status: nextStatus } : item))
+      );
+      notifications.show({
+        title: nextStatus === "active" ? "License Activated" : "License Revoked",
+        message: `Serial ${lic.serialKey} marked as ${nextStatus}`,
+        color: nextStatus === "active" ? "teal" : "orange",
+      });
+      if (selectedApp) loadApps(selectedApp.id);
+    } catch (err: any) {
+      notifications.show({
+        title: "Error updating license",
+        message: err.message,
+        color: "red",
+      });
+    }
+  };
+
+  const handleDeleteLicense = (lic: AppLicenseItem) => {
+    openHoldToConfirmModal({
+      title: `Delete License: ${lic.serialKey}`,
+      centered: true,
+      children: (
+        <Text size="sm">
+          Are you sure you want to delete license <b>{lic.serialKey}</b>? All active PC activations for this key will be revoked immediately.
+        </Text>
+      ),
+      confirmProps: { color: "red" },
+      onConfirm: async () => {
+        try {
+          await api.deleteAppLicense(lic.id);
+          notifications.show({
+            title: "License deleted",
+            message: "License key removed",
+            color: "teal",
+          });
+          loadLicenses();
+          if (selectedApp) loadApps(selectedApp.id);
+        } catch (err: any) {
+          notifications.show({
+            title: "Delete error",
+            message: err.message,
+            color: "red",
+          });
+        }
+      },
+    });
+  };
+
+  // Devices Handlers
+  const openLockDeviceModal = (dev?: AppDeviceItem) => {
+    if (dev) {
+      setLockDeviceId(dev.deviceId);
+      setLockDeviceName(dev.deviceName || "");
+      setLockReason(dev.lockReason || "");
+    } else {
+      setLockDeviceId("");
+      setLockDeviceName("");
+      setLockReason("");
+    }
+    setIsLockModalOpen(true);
+  };
+
+  const handleLockDeviceSubmit = async () => {
+    if (!selectedApp) return;
+    if (!lockDeviceId.trim()) {
+      notifications.show({
+        title: "Missing Device ID",
+        message: "Please enter the Hardware ID / Device identifier to lock",
+        color: "red",
+      });
+      return;
+    }
+
+    setSavingLock(true);
+    try {
+      await api.lockAppDevice({
+        appId: selectedApp.id,
+        deviceId: lockDeviceId.trim(),
+        deviceName: lockDeviceName.trim() || undefined,
+        isLocked: true,
+        reason: lockReason.trim() || "Locked by administrator",
+      });
+
+      notifications.show({
+        title: "PC / Device Locked",
+        message: `Device ${lockDeviceId} has been blocked from accessing ${selectedApp.name}`,
+        color: "red",
+      });
+
+      setIsLockModalOpen(false);
+      loadDevices();
+      loadApps(selectedApp.id);
+    } catch (err: any) {
+      notifications.show({
+        title: "Lock error",
+        message: err.message,
+        color: "red",
+      });
+    } finally {
+      setSavingLock(false);
+    }
+  };
+
+  const handleToggleDeviceLock = async (dev: AppDeviceItem) => {
+    try {
+      if (dev.isLocked) {
+        await api.toggleAppDeviceLock(dev.id, false);
+        setDevices((prev) =>
+          prev.map((item) =>
+            item.id === dev.id ? { ...item, isLocked: false, lockReason: null, lockedAt: null } : item
+          )
+        );
+        notifications.show({
+          title: "PC Unlocked",
+          message: `Device ${dev.deviceName || dev.deviceId} is now allowed`,
+          color: "teal",
+        });
+        if (selectedApp) loadApps(selectedApp.id);
+      } else {
+        openLockDeviceModal(dev);
+      }
+    } catch (err: any) {
+      notifications.show({
+        title: "Error updating device",
+        message: err.message,
+        color: "red",
+      });
+    }
+  };
+
+  const handleDeleteDevice = (dev: AppDeviceItem) => {
+    openHoldToConfirmModal({
+      title: `Delete Device: ${dev.deviceName || dev.deviceId}`,
+      centered: true,
+      children: (
+        <Text size="sm">
+          Are you sure you want to delete and unbind device <b>{dev.deviceName || dev.deviceId}</b>? The PC will be unregistered and must re-authenticate.
+        </Text>
+      ),
+      confirmProps: { color: "red" },
+      onConfirm: async () => {
+        try {
+          await api.deleteAppDevice(dev.id);
+          notifications.show({
+            title: "Device deleted",
+            message: "Device removed from registry",
+            color: "teal",
+          });
+          loadDevices();
+          if (selectedApp) loadApps(selectedApp.id);
+        } catch (err: any) {
+          notifications.show({
+            title: "Delete error",
+            message: err.message,
+            color: "red",
+          });
+        }
+      },
+    });
+  };
+
   // Run Simulator Check
   const handleRunSimulation = async () => {
     if (!selectedApp) return;
     setSimulating(true);
+    setSimDeviceCheckResult(null);
     try {
       const res = await api.checkAppUpdate(selectedApp.slug, {
         currentVersion: simCurrentVersion.trim(),
@@ -517,6 +850,15 @@ export const AppsView: React.FC = () => {
         channel: simChannel.trim() ? simChannel.trim() : undefined,
       });
       setSimResult(res);
+
+      if (simDeviceId.trim()) {
+        try {
+          const devCheck = await api.checkAppDevice(selectedApp.slug, simDeviceId.trim());
+          setSimDeviceCheckResult(devCheck);
+        } catch (devErr: any) {
+          setSimDeviceCheckResult({ allowed: false, isLocked: true, lockReason: devErr.message });
+        }
+      }
     } catch (err: any) {
       notifications.show({
         title: "Simulation error",
@@ -542,6 +884,39 @@ export const AppsView: React.FC = () => {
     }
     if (channelFilter && channelFilter !== "all" && v.channel !== channelFilter) {
       return false;
+    }
+    return true;
+  });
+
+  // Filtered licenses
+  const filteredLicenses = licenses.filter((l) => {
+    if (licenseSearch.trim()) {
+      const q = licenseSearch.trim().toLowerCase();
+      const matchKey = l.serialKey.toLowerCase().includes(q);
+      const matchCust = (l.customerName || "").toLowerCase().includes(q);
+      const matchEmail = (l.customerEmail || "").toLowerCase().includes(q);
+      const matchNotes = (l.notes || "").toLowerCase().includes(q);
+      if (!matchKey && !matchCust && !matchEmail && !matchNotes) return false;
+    }
+    if (licenseStatusFilter && licenseStatusFilter !== "all" && l.status !== licenseStatusFilter) {
+      return false;
+    }
+    return true;
+  });
+
+  // Filtered devices
+  const filteredDevices = devices.filter((d) => {
+    if (deviceSearch.trim()) {
+      const q = deviceSearch.trim().toLowerCase();
+      const matchId = d.deviceId.toLowerCase().includes(q);
+      const matchName = (d.deviceName || "").toLowerCase().includes(q);
+      const matchIp = (d.ipAddress || "").toLowerCase().includes(q);
+      const matchKey = (d.licenseKey || "").toLowerCase().includes(q);
+      if (!matchId && !matchName && !matchIp && !matchKey) return false;
+    }
+    if (deviceLockedFilter && deviceLockedFilter !== "all") {
+      if (deviceLockedFilter === "locked" && !d.isLocked) return false;
+      if (deviceLockedFilter === "allowed" && d.isLocked) return false;
     }
     return true;
   });
@@ -898,22 +1273,61 @@ export const AppsView: React.FC = () => {
                     Test Update Check
                   </Button>
 
-                  <Button
-                    size={isMobile ? "xs" : "sm"}
-                    variant="filled"
-                    color="teal"
-                    leftSection={<IconCloudUpload size={isMobile ? 14 : 16} color="#ffffff" />}
-                    onClick={() => openVersionModal()}
-                    style={{
-                      backgroundColor: "var(--color-neon-primary, #10e57a)",
-                      color: "#ffffff",
-                      fontWeight: 600,
-                      flex: isMobile ? "1 1 auto" : "initial",
-                    }}
-                    styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
-                  >
-                    Upload New Version
-                  </Button>
+                  {activeTab === "releases" && (
+                    <Button
+                      size={isMobile ? "xs" : "sm"}
+                      variant="filled"
+                      color="teal"
+                      leftSection={<IconCloudUpload size={isMobile ? 14 : 16} color="#ffffff" />}
+                      onClick={() => openVersionModal()}
+                      style={{
+                        backgroundColor: "var(--color-neon-primary, #10e57a)",
+                        color: "#ffffff",
+                        fontWeight: 600,
+                        flex: isMobile ? "1 1 auto" : "initial",
+                      }}
+                      styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                    >
+                      Upload New Version
+                    </Button>
+                  )}
+
+                  {activeTab === "licenses" && (
+                    <Button
+                      size={isMobile ? "xs" : "sm"}
+                      variant="filled"
+                      color="teal"
+                      leftSection={<IconPlus size={isMobile ? 14 : 16} color="#ffffff" />}
+                      onClick={() => openCreateLicenseModal()}
+                      style={{
+                        backgroundColor: "var(--color-neon-primary, #10e57a)",
+                        color: "#ffffff",
+                        fontWeight: 600,
+                        flex: isMobile ? "1 1 auto" : "initial",
+                      }}
+                      styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                    >
+                      Generate License Keys
+                    </Button>
+                  )}
+
+                  {activeTab === "devices" && (
+                    <Button
+                      size={isMobile ? "xs" : "sm"}
+                      variant="filled"
+                      color="red"
+                      leftSection={<IconBan size={isMobile ? 14 : 16} color="#ffffff" />}
+                      onClick={() => openLockDeviceModal()}
+                      style={{
+                        color: "#ffffff",
+                        fontWeight: 600,
+                        flex: isMobile ? "1 1 auto" : "initial",
+                      }}
+                      styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                    >
+                      Lock a PC / HWID
+                    </Button>
+                  )}
 
                   <Group gap={4}>
                     <Tooltip label="Edit App Information" withArrow>
@@ -986,20 +1400,15 @@ export const AppsView: React.FC = () => {
                   }}
                 >
                   <Text size="11px" c="dimmed" fw={600} tt="uppercase">
-                    Latest Version
+                    Active Serials
                   </Text>
                   <Group gap={6} align="center">
-                    <Text size="lg" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                      {selectedApp.latestVersion ? `v${selectedApp.latestVersion}` : "None"}
+                    <Text size="lg" fw={700} style={{ color: "var(--color-text-primary)" }}>
+                      {selectedApp.activeLicenses ?? licenses.filter((l) => l.status === "active").length}
                     </Text>
-                    {selectedApp.latestImportance && (
-                      <Badge
-                        size="xs"
-                        color={selectedApp.latestImportance === "automatic" ? "orange" : "blue"}
-                      >
-                        {selectedApp.latestImportance}
-                      </Badge>
-                    )}
+                    <Text size="xs" c="dimmed">
+                      / {selectedApp.totalLicenses ?? licenses.length}
+                    </Text>
                   </Group>
                 </Paper>
 
@@ -1012,310 +1421,1041 @@ export const AppsView: React.FC = () => {
                   }}
                 >
                   <Text size="11px" c="dimmed" fw={600} tt="uppercase">
-                    Total Storage
+                    Connected PCs
                   </Text>
-                  <Text size="lg" fw={700} style={{ color: "var(--color-text-secondary)" }}>
-                    {formatBytes(selectedApp.totalStorageBytes || 0)}
-                  </Text>
+                  <Group gap={6} align="center">
+                    <Text size="lg" fw={700} style={{ color: "var(--color-text-primary)" }}>
+                      {selectedApp.totalDevices ?? devices.length}
+                    </Text>
+                    {selectedApp.devicePolicy === "max_devices" && (
+                      <Text size="xs" c="dimmed">
+                        / {selectedApp.maxDevices || 3} max
+                      </Text>
+                    )}
+                    {selectedApp.devicePolicy === "max_devices" &&
+                    (selectedApp.totalDevices ?? devices.length) >= (selectedApp.maxDevices || 3) ? (
+                      <Badge size="xs" color="orange" variant="filled">
+                        Quota Full
+                      </Badge>
+                    ) : selectedApp.devicePolicy === "whitelist_only" ? (
+                      <Badge size="xs" color="purple" variant="light">
+                        Whitelist
+                      </Badge>
+                    ) : selectedApp.lockedDevices && selectedApp.lockedDevices > 0 ? (
+                      <Badge size="xs" color="red" variant="filled">
+                        {selectedApp.lockedDevices} locked
+                      </Badge>
+                    ) : (
+                      <Badge size="xs" color="teal" variant="light">
+                        All allowed
+                      </Badge>
+                    )}
+                  </Group>
                 </Paper>
               </SimpleGrid>
             </Box>
 
-            {/* Releases Table & Filter Controls */}
-            <Box p={isMobile ? "xs" : "md"} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              <Group justify="space-between" mb="sm" wrap="wrap" gap="xs">
-                <Group gap="xs" wrap="wrap" style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: 0 }}>
-                  <TextInput
-                    placeholder="Search versions, files..."
-                    size="xs"
-                    style={{ flex: isMobile ? "1 1 100%" : "0 0 200px" }}
-                    leftSection={<IconSearch size={14} />}
-                    value={versionSearch}
-                    onChange={(e) => setVersionSearch(e.target.value)}
-                    styles={{
-                      input: {
-                        backgroundColor: "var(--color-bg-card)",
-                        borderColor: "var(--color-border)",
-                      },
-                    }}
-                  />
+            {/* Selected App Views Tabs */}
+            <Tabs
+              value={activeTab}
+              onChange={(val) => setActiveTab(val || "releases")}
+              style={{
+                flex: 1,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
+            >
+              <Box
+                px={isMobile ? "xs" : "md"}
+                pt="xs"
+                style={{
+                  borderBottom: "1px solid var(--color-border)",
+                  backgroundColor: "var(--color-bg-surface)",
+                }}
+              >
+                <Tabs.List>
+                  <Tabs.Tab
+                    value="releases"
+                    leftSection={<IconVersions size={16} />}
+                    rightSection={
+                      <Badge size="xs" variant="light" color="teal">
+                        {selectedApp.totalReleases}
+                      </Badge>
+                    }
+                  >
+                    Releases
+                  </Tabs.Tab>
+                  <Tabs.Tab
+                    value="licenses"
+                    leftSection={<IconKey size={16} />}
+                    rightSection={
+                      <Badge size="xs" variant="light" color="blue">
+                        {selectedApp.activeLicenses ?? licenses.length}
+                      </Badge>
+                    }
+                  >
+                    Licenses & Serials
+                  </Tabs.Tab>
+                  <Tabs.Tab
+                    value="devices"
+                    leftSection={<IconDeviceDesktop size={16} />}
+                    rightSection={
+                      selectedApp.lockedDevices && selectedApp.lockedDevices > 0 ? (
+                        <Badge size="xs" variant="filled" color="red">
+                          {selectedApp.lockedDevices} locked
+                        </Badge>
+                      ) : (
+                        <Badge size="xs" variant="light" color="gray">
+                          {devices.length}
+                        </Badge>
+                      )
+                    }
+                  >
+                    Connected Devices & PC Locks
+                  </Tabs.Tab>
+                </Tabs.List>
+              </Box>
 
-                  <Group gap="xs" wrap={isMobile ? "wrap" : "nowrap"} style={{ flex: isMobile ? "1 1 100%" : "auto" }}>
-                    <Select
-                      size="xs"
-                      style={{ flex: isMobile ? "1 1 45%" : "0 0 130px" }}
-                      placeholder="Platform"
-                      data={[
-                        { value: "all", label: "All Platforms" },
-                        { value: "windows", label: "Windows" },
-                        { value: "macos", label: "macOS" },
-                        { value: "linux", label: "Linux" },
-                        { value: "android", label: "Android" },
-                        { value: "ios", label: "iOS" },
-                        { value: "web", label: "Web" },
-                      ]}
-                      value={platformFilter}
-                      onChange={setPlatformFilter}
-                    />
+              {/* ============================================================ */}
+              {/* TAB 1: RELEASES */}
+              {/* ============================================================ */}
+              <Tabs.Panel
+                value="releases"
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <Box p={isMobile ? "xs" : "md"} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  <Group justify="space-between" mb="sm" wrap="wrap" gap="xs">
+                    <Group gap="xs" wrap="wrap" style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: 0 }}>
+                      <TextInput
+                        placeholder="Search versions, files..."
+                        size="xs"
+                        style={{ flex: isMobile ? "1 1 100%" : "0 0 200px" }}
+                        leftSection={<IconSearch size={14} />}
+                        value={versionSearch}
+                        onChange={(e) => setVersionSearch(e.target.value)}
+                        styles={{
+                          input: {
+                            backgroundColor: "var(--color-bg-card)",
+                            borderColor: "var(--color-border)",
+                          },
+                        }}
+                      />
 
-                    <Select
-                      size="xs"
-                      style={{ flex: isMobile ? "1 1 45%" : "0 0 120px" }}
-                      placeholder="Channel"
-                      data={[
-                        { value: "all", label: "All Channels" },
-                        { value: "stable", label: "Stable" },
-                        { value: "beta", label: "Beta" },
-                        { value: "alpha", label: "Alpha" },
-                        { value: "latest", label: "Latest" },
-                      ]}
-                      value={channelFilter}
-                      onChange={setChannelFilter}
-                    />
+                      <Group gap="xs" wrap={isMobile ? "wrap" : "nowrap"} style={{ flex: isMobile ? "1 1 100%" : "auto" }}>
+                        <Select
+                          size="xs"
+                          style={{ flex: isMobile ? "1 1 45%" : "0 0 130px" }}
+                          placeholder="Platform"
+                          data={[
+                            { value: "all", label: "All Platforms" },
+                            { value: "windows", label: "Windows" },
+                            { value: "macos", label: "macOS" },
+                            { value: "linux", label: "Linux" },
+                            { value: "android", label: "Android" },
+                            { value: "ios", label: "iOS" },
+                            { value: "web", label: "Web" },
+                          ]}
+                          value={platformFilter}
+                          onChange={setPlatformFilter}
+                        />
+
+                        <Select
+                          size="xs"
+                          style={{ flex: isMobile ? "1 1 45%" : "0 0 120px" }}
+                          placeholder="Channel"
+                          data={[
+                            { value: "all", label: "All Channels" },
+                            { value: "stable", label: "Stable" },
+                            { value: "beta", label: "Beta" },
+                            { value: "alpha", label: "Alpha" },
+                            { value: "latest", label: "Latest" },
+                          ]}
+                          value={channelFilter}
+                          onChange={setChannelFilter}
+                        />
+                      </Group>
+                    </Group>
+
+                    <Group gap="xs" justify={isMobile ? "flex-end" : "flex-start"} style={{ width: isMobile ? "100%" : "auto" }}>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="gray"
+                        leftSection={<IconRefresh size={14} />}
+                        onClick={loadVersions}
+                        loading={loadingVersions}
+                      >
+                        Refresh
+                      </Button>
+                    </Group>
                   </Group>
-                </Group>
 
-                <Group gap="xs" justify={isMobile ? "flex-end" : "flex-start"} style={{ width: isMobile ? "100%" : "auto" }}>
-                  <Button
-                    size="xs"
-                    variant="subtle"
-                    color="gray"
-                    leftSection={<IconRefresh size={14} />}
-                    onClick={loadVersions}
-                    loading={loadingVersions}
-                  >
-                    Refresh
-                  </Button>
-                </Group>
-              </Group>
-
-              {/* Versions List Table */}
-              <ScrollArea style={{ flex: 1, width: "100%" }} type="auto">
-                {loadingVersions && versions.length === 0 ? (
-                  <Text size="sm" c="dimmed" ta="center" py="xl">
-                    Loading releases...
-                  </Text>
-                ) : filteredVersions.length === 0 ? (
-                  <Box
-                    ta="center"
-                    py="xl"
-                    style={{
-                      border: "1px dashed var(--color-border)",
-                      borderRadius: 12,
-                    }}
-                  >
-                    <IconCloudUpload size={40} color="var(--color-text-dimmed)" stroke={1.4} />
-                    <Title order={5} mt="sm" c="dimmed">
-                      No versions released yet
-                    </Title>
-                    <Text size="xs" c="dimmed" mt={4} mb="md">
-                      Upload an installer, archive, or binary package for this app.
-                    </Text>
-                    <Button
-                      size="xs"
-                      color="teal"
-                      leftSection={<IconCloudUpload size={14} color="#ffffff" />}
-                      onClick={() => openVersionModal()}
-                      style={{ backgroundColor: "var(--color-neon-primary, #10e57a)", color: "#ffffff" }}
-                      styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
-                    >
-                      Upload First Version
-                    </Button>
-                  </Box>
-                ) : (
-                  <Table
-                    striped
-                    highlightOnHover
-                    verticalSpacing="sm"
-                    style={{ minWidth: 620 }}
-                    styles={{
-                      th: {
-                        color: "var(--color-text-dimmed)",
-                        fontSize: "11px",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      },
-                      td: {
-                        color: "var(--color-text-primary)",
-                        fontSize: "13px",
-                      },
-                    }}
-                  >
-                    <Table.Thead>
-                      <Table.Tr>
-                        <Table.Th>Version & Build</Table.Th>
-                        <Table.Th>Importance</Table.Th>
-                        <Table.Th>Channel</Table.Th>
-                        <Table.Th>Platform</Table.Th>
-                        <Table.Th>Binary File</Table.Th>
-                        <Table.Th>Downloads</Table.Th>
-                        <Table.Th>Active</Table.Th>
-                        <Table.Th style={{ textAlign: "right" }}>Actions</Table.Th>
-                      </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                      {filteredVersions.map((v) => (
-                        <Table.Tr key={v.id}>
-                          {/* Version & Build */}
-                          <Table.Td>
-                            <Group gap={6} align="center">
-                              <Text fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                                v{v.version}
-                              </Text>
-                              <Badge size="xs" variant="outline" color="gray">
-                                #{v.buildNumber}
-                              </Badge>
-                            </Group>
-                            <Text size="11px" c="dimmed">
-                              {new Date(v.createdAt).toLocaleDateString()}
-                            </Text>
-                          </Table.Td>
-
-                          {/* Importance */}
-                          <Table.Td>
-                            {v.isAutomatic ? (
-                              <Tooltip
-                                label="Automatic update: applies immediately without asking user"
-                                withArrow
-                              >
-                                <Badge color="orange" variant="light" size="sm">
-                                  Automatic
-                                </Badge>
-                              </Tooltip>
-                            ) : (
-                              <Tooltip label="Optional update: user can choose to update" withArrow>
-                                <Badge color="blue" variant="light" size="sm">
-                                  Optional
-                                </Badge>
-                              </Tooltip>
-                            )}
-                          </Table.Td>
-
-                          {/* Channel */}
-                          <Table.Td>
-                            <Badge
-                              size="sm"
-                              variant="dot"
-                              color={
-                                v.channel === "alpha"
-                                  ? "purple"
-                                  : v.channel === "beta"
-                                  ? "indigo"
-                                  : v.channel === "stable"
-                                  ? "teal"
-                                  : "cyan"
-                              }
-                            >
-                              {v.channel}
-                            </Badge>
-                          </Table.Td>
-
-                          {/* Platform */}
-                          <Table.Td>
-                            <Badge size="xs" variant="outline" color="gray">
-                              {v.platform}
-                            </Badge>
-                          </Table.Td>
-
-                          {/* Binary File */}
-                          <Table.Td>
-                            {v.fileName ? (
-                              <Box>
-                                <Text size="xs" fw={500} truncate style={{ maxWidth: 160 }}>
-                                  {v.fileName}
-                                </Text>
+                  {/* Versions List Table */}
+                  <ScrollArea style={{ flex: 1, width: "100%" }} type="auto">
+                    {loadingVersions && versions.length === 0 ? (
+                      <Text size="sm" c="dimmed" ta="center" py="xl">
+                        Loading releases...
+                      </Text>
+                    ) : filteredVersions.length === 0 ? (
+                      <Box
+                        ta="center"
+                        py="xl"
+                        style={{
+                          border: "1px dashed var(--color-border)",
+                          borderRadius: 12,
+                        }}
+                      >
+                        <IconCloudUpload size={40} color="var(--color-text-dimmed)" stroke={1.4} />
+                        <Title order={5} mt="sm" c="dimmed">
+                          No versions released yet
+                        </Title>
+                        <Text size="xs" c="dimmed" mt={4} mb="md">
+                          Upload an installer, archive, or binary package for this app.
+                        </Text>
+                        <Button
+                          size="xs"
+                          color="teal"
+                          leftSection={<IconCloudUpload size={14} color="#ffffff" />}
+                          onClick={() => openVersionModal()}
+                          style={{ backgroundColor: "var(--color-neon-primary, #10e57a)", color: "#ffffff" }}
+                          styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                        >
+                          Upload First Version
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Table
+                        striped
+                        highlightOnHover
+                        verticalSpacing="sm"
+                        style={{ minWidth: 620 }}
+                        styles={{
+                          th: {
+                            color: "var(--color-text-dimmed)",
+                            fontSize: "11px",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          },
+                          td: {
+                            color: "var(--color-text-primary)",
+                            fontSize: "13px",
+                          },
+                        }}
+                      >
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Version & Build</Table.Th>
+                            <Table.Th>Importance</Table.Th>
+                            <Table.Th>Channel</Table.Th>
+                            <Table.Th>Platform</Table.Th>
+                            <Table.Th>Binary File</Table.Th>
+                            <Table.Th>Downloads</Table.Th>
+                            <Table.Th>Active</Table.Th>
+                            <Table.Th style={{ textAlign: "right" }}>Actions</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {filteredVersions.map((v) => (
+                            <Table.Tr key={v.id}>
+                              {/* Version & Build */}
+                              <Table.Td>
+                                <Group gap={6} align="center">
+                                  <Text fw={700} style={{ fontFamily: "var(--font-mono)" }}>
+                                    v{v.version}
+                                  </Text>
+                                  <Badge size="xs" variant="outline" color="gray">
+                                    #{v.buildNumber}
+                                  </Badge>
+                                </Group>
                                 <Text size="11px" c="dimmed">
-                                  {formatBytes(v.fileSize)}
+                                  {new Date(v.createdAt).toLocaleDateString()}
                                 </Text>
-                              </Box>
-                            ) : (
-                              <Text size="xs" c="dimmed">
-                                No binary attached
-                              </Text>
-                            )}
-                          </Table.Td>
+                              </Table.Td>
 
-                          {/* Downloads */}
-                          <Table.Td>
-                            <Text size="xs" fw={600}>
-                              {v.downloadCount}
-                            </Text>
-                          </Table.Td>
-
-                          {/* Active Switch */}
-                          <Table.Td>
-                            <Switch
-                              size="xs"
-                              color="teal"
-                              checked={v.isActive}
-                              onChange={() => handleToggleActive(v)}
-                            />
-                          </Table.Td>
-
-                          {/* Actions */}
-                          <Table.Td style={{ textAlign: "right" }}>
-                            <Group gap={4} justify="flex-end" wrap="nowrap">
-                              {v.downloadUrl && (
-                                <Tooltip label="Download Binary File" withArrow>
-                                  <ActionIcon
-                                    component="a"
-                                    href={v.downloadUrl}
-                                    download
-                                    variant="subtle"
-                                    color="teal"
-                                    size="sm"
+                              {/* Importance */}
+                              <Table.Td>
+                                {v.isAutomatic ? (
+                                  <Tooltip
+                                    label="Automatic update: applies immediately without asking user"
+                                    withArrow
                                   >
-                                    <IconDownload size={15} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              )}
+                                    <Badge color="orange" variant="light" size="sm">
+                                      Automatic
+                                    </Badge>
+                                  </Tooltip>
+                                ) : (
+                                  <Tooltip label="Optional update: user can choose to update" withArrow>
+                                    <Badge color="blue" variant="light" size="sm">
+                                      Optional
+                                    </Badge>
+                                  </Tooltip>
+                                )}
+                              </Table.Td>
 
-                              <Tooltip label="Copy Direct Download Link" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="gray"
+                              {/* Channel */}
+                              <Table.Td>
+                                <Badge
                                   size="sm"
-                                  onClick={() =>
-                                    copyToClipboard(
-                                      `${window.location.origin}${v.downloadUrl}`,
-                                      "Download link"
-                                    )
+                                  variant="dot"
+                                  color={
+                                    v.channel === "alpha"
+                                      ? "purple"
+                                      : v.channel === "beta"
+                                      ? "indigo"
+                                      : v.channel === "stable"
+                                      ? "teal"
+                                      : "cyan"
                                   }
                                 >
-                                  <IconCopy size={15} />
-                                </ActionIcon>
-                              </Tooltip>
+                                  {v.channel}
+                                </Badge>
+                              </Table.Td>
 
-                              <Tooltip label="Edit Metadata" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="blue"
-                                  size="sm"
-                                  onClick={() => openVersionModal(v)}
-                                >
-                                  <IconEdit size={15} />
-                                </ActionIcon>
-                              </Tooltip>
+                              {/* Platform */}
+                              <Table.Td>
+                                <Badge size="xs" variant="outline" color="gray">
+                                  {v.platform}
+                                </Badge>
+                              </Table.Td>
 
-                              <Tooltip label="Delete Version" withArrow>
-                                <ActionIcon
-                                  variant="subtle"
-                                  color="red"
-                                  size="sm"
-                                  onClick={() => handleDeleteVersion(v)}
-                                >
-                                  <IconTrash size={15} />
-                                </ActionIcon>
-                              </Tooltip>
-                            </Group>
-                          </Table.Td>
-                        </Table.Tr>
-                      ))}
-                    </Table.Tbody>
-                  </Table>
-                )}
-              </ScrollArea>
-            </Box>
+                              {/* Binary File */}
+                              <Table.Td>
+                                {v.fileName ? (
+                                  <Box>
+                                    <Text size="xs" fw={500} truncate style={{ maxWidth: 160 }}>
+                                      {v.fileName}
+                                    </Text>
+                                    <Text size="11px" c="dimmed">
+                                      {formatBytes(v.fileSize)}
+                                    </Text>
+                                  </Box>
+                                ) : (
+                                  <Text size="xs" c="dimmed">
+                                    No binary attached
+                                  </Text>
+                                )}
+                              </Table.Td>
+
+                              {/* Downloads */}
+                              <Table.Td>
+                                <Text size="xs" fw={600}>
+                                  {v.downloadCount}
+                                </Text>
+                              </Table.Td>
+
+                              {/* Active Switch */}
+                              <Table.Td>
+                                <Switch
+                                  size="xs"
+                                  color="teal"
+                                  checked={v.isActive}
+                                  onChange={() => handleToggleActive(v)}
+                                />
+                              </Table.Td>
+
+                              {/* Actions */}
+                              <Table.Td style={{ textAlign: "right" }}>
+                                <Group gap={4} justify="flex-end" wrap="nowrap">
+                                  {v.downloadUrl && (
+                                    <Tooltip label="Download Binary File" withArrow>
+                                      <ActionIcon
+                                        component="a"
+                                        href={v.downloadUrl}
+                                        download
+                                        variant="subtle"
+                                        color="teal"
+                                        size="sm"
+                                      >
+                                        <IconDownload size={15} />
+                                      </ActionIcon>
+                                    </Tooltip>
+                                  )}
+
+                                  <Tooltip label="Copy Direct Download Link" withArrow>
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color="gray"
+                                      size="sm"
+                                      onClick={() =>
+                                        copyToClipboard(
+                                          `${window.location.origin}${v.downloadUrl}`,
+                                          "Download link"
+                                        )
+                                      }
+                                    >
+                                      <IconCopy size={15} />
+                                    </ActionIcon>
+                                  </Tooltip>
+
+                                  <Tooltip label="Edit Metadata" withArrow>
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color="blue"
+                                      size="sm"
+                                      onClick={() => openVersionModal(v)}
+                                    >
+                                      <IconEdit size={15} />
+                                    </ActionIcon>
+                                  </Tooltip>
+
+                                  <Tooltip label="Delete Version" withArrow>
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color="red"
+                                      size="sm"
+                                      onClick={() => handleDeleteVersion(v)}
+                                    >
+                                      <IconTrash size={15} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    )}
+                  </ScrollArea>
+                </Box>
+              </Tabs.Panel>
+
+              {/* ============================================================ */}
+              {/* TAB 2: LICENSES & SERIALS */}
+              {/* ============================================================ */}
+              <Tabs.Panel
+                value="licenses"
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <Box p={isMobile ? "xs" : "md"} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  <Group justify="space-between" mb="sm" wrap="wrap" gap="xs">
+                    <Group gap="xs" wrap="wrap" style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: 0 }}>
+                      <TextInput
+                        placeholder="Search serial, customer, email..."
+                        size="xs"
+                        style={{ flex: isMobile ? "1 1 100%" : "0 0 240px" }}
+                        leftSection={<IconSearch size={14} />}
+                        value={licenseSearch}
+                        onChange={(e) => setLicenseSearch(e.target.value)}
+                        styles={{
+                          input: {
+                            backgroundColor: "var(--color-bg-card)",
+                            borderColor: "var(--color-border)",
+                          },
+                        }}
+                      />
+
+                      <Select
+                        size="xs"
+                        style={{ flex: isMobile ? "1 1 45%" : "0 0 140px" }}
+                        placeholder="Status"
+                        data={[
+                          { value: "all", label: "All Statuses" },
+                          { value: "active", label: "Active" },
+                          { value: "revoked", label: "Revoked" },
+                          { value: "suspended", label: "Suspended" },
+                          { value: "expired", label: "Expired" },
+                        ]}
+                        value={licenseStatusFilter}
+                        onChange={setLicenseStatusFilter}
+                      />
+                    </Group>
+
+                    <Group gap="xs" justify={isMobile ? "flex-end" : "flex-start"} style={{ width: isMobile ? "100%" : "auto" }}>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="gray"
+                        leftSection={<IconRefresh size={14} />}
+                        onClick={loadLicenses}
+                        loading={loadingLicenses}
+                      >
+                        Refresh
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="filled"
+                        color="teal"
+                        leftSection={<IconPlus size={14} color="#ffffff" />}
+                        onClick={openCreateLicenseModal}
+                        style={{ backgroundColor: "var(--color-neon-primary, #10e57a)", color: "#ffffff" }}
+                        styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                      >
+                        Generate Keys
+                      </Button>
+                    </Group>
+                  </Group>
+
+                  {/* Licenses Table */}
+                  <ScrollArea style={{ flex: 1, width: "100%" }} type="auto">
+                    {loadingLicenses && licenses.length === 0 ? (
+                      <Text size="sm" c="dimmed" ta="center" py="xl">
+                        Loading license keys...
+                      </Text>
+                    ) : filteredLicenses.length === 0 ? (
+                      <Box
+                        ta="center"
+                        py="xl"
+                        style={{
+                          border: "1px dashed var(--color-border)",
+                          borderRadius: 12,
+                        }}
+                      >
+                        <IconKey size={40} color="var(--color-text-dimmed)" stroke={1.4} />
+                        <Title order={5} mt="sm" c="dimmed">
+                          No licenses issued yet
+                        </Title>
+                        <Text size="xs" c="dimmed" mt={4} mb="md">
+                          Generate single or batch license keys with custom PC activation limits.
+                        </Text>
+                        <Button
+                          size="xs"
+                          color="teal"
+                          leftSection={<IconPlus size={14} color="#ffffff" />}
+                          onClick={openCreateLicenseModal}
+                          style={{ backgroundColor: "var(--color-neon-primary, #10e57a)", color: "#ffffff" }}
+                          styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                        >
+                          Generate First License Key
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Table
+                        striped
+                        highlightOnHover
+                        verticalSpacing="sm"
+                        style={{ minWidth: 680 }}
+                        styles={{
+                          th: {
+                            color: "var(--color-text-dimmed)",
+                            fontSize: "11px",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          },
+                          td: {
+                            color: "var(--color-text-primary)",
+                            fontSize: "13px",
+                          },
+                        }}
+                      >
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Serial Key</Table.Th>
+                            <Table.Th>Status</Table.Th>
+                            <Table.Th>PC Activations</Table.Th>
+                            <Table.Th>Customer</Table.Th>
+                            <Table.Th>Expires</Table.Th>
+                            <Table.Th>Created</Table.Th>
+                            <Table.Th style={{ textAlign: "right" }}>Actions</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {filteredLicenses.map((lic) => {
+                            const isExpired =
+                              lic.expiresAt && new Date(lic.expiresAt).getTime() < Date.now();
+                            return (
+                              <Table.Tr key={lic.id}>
+                                {/* Serial Key */}
+                                <Table.Td>
+                                  <Group gap={6} align="center" wrap="nowrap">
+                                    <Code
+                                      style={{
+                                        fontFamily: "var(--font-mono)",
+                                        fontWeight: 700,
+                                        fontSize: "13px",
+                                        letterSpacing: "0.03em",
+                                      }}
+                                    >
+                                      {lic.serialKey}
+                                    </Code>
+                                    <Tooltip label="Copy Serial Key" withArrow>
+                                      <ActionIcon
+                                        size="xs"
+                                        variant="subtle"
+                                        color="gray"
+                                        onClick={() =>
+                                          copyToClipboard(lic.serialKey, "License Key")
+                                        }
+                                      >
+                                        <IconCopy size={13} />
+                                      </ActionIcon>
+                                    </Tooltip>
+                                  </Group>
+                                  {lic.notes && (
+                                    <Text size="11px" c="dimmed" lineClamp={1}>
+                                      {lic.notes}
+                                    </Text>
+                                  )}
+                                </Table.Td>
+
+                                {/* Status */}
+                                <Table.Td>
+                                  <Badge
+                                    size="sm"
+                                    color={
+                                      lic.status === "active"
+                                        ? "teal"
+                                        : lic.status === "revoked"
+                                        ? "red"
+                                        : lic.status === "suspended"
+                                        ? "orange"
+                                        : "yellow"
+                                    }
+                                  >
+                                    {lic.status}
+                                  </Badge>
+                                </Table.Td>
+
+                                {/* Activations */}
+                                <Table.Td>
+                                  <Badge
+                                    size="sm"
+                                    variant="light"
+                                    color={
+                                      lic.activatedCount >= lic.maxActivations
+                                        ? "orange"
+                                        : "teal"
+                                    }
+                                  >
+                                    {lic.activatedCount} / {lic.maxActivations} PCs
+                                  </Badge>
+                                </Table.Td>
+
+                                {/* Customer */}
+                                <Table.Td>
+                                  {lic.customerName || lic.customerEmail ? (
+                                    <Box>
+                                      {lic.customerName && (
+                                        <Text size="xs" fw={600}>
+                                          {lic.customerName}
+                                        </Text>
+                                      )}
+                                      {lic.customerEmail && (
+                                        <Text size="11px" c="dimmed">
+                                          {lic.customerEmail}
+                                        </Text>
+                                      )}
+                                    </Box>
+                                  ) : (
+                                    <Text size="xs" c="dimmed">
+                                      Unassigned
+                                    </Text>
+                                  )}
+                                </Table.Td>
+
+                                {/* Expires */}
+                                <Table.Td>
+                                  {lic.expiresAt ? (
+                                    <Text
+                                      size="xs"
+                                      c={isExpired ? "red" : undefined}
+                                      fw={isExpired ? 600 : undefined}
+                                    >
+                                      {new Date(lic.expiresAt).toLocaleDateString()}
+                                      {isExpired && " (Expired)"}
+                                    </Text>
+                                  ) : (
+                                    <Badge size="xs" variant="outline" color="gray">
+                                      Lifetime
+                                    </Badge>
+                                  )}
+                                </Table.Td>
+
+                                {/* Created */}
+                                <Table.Td>
+                                  <Text size="11px" c="dimmed">
+                                    {new Date(lic.createdAt).toLocaleDateString()}
+                                  </Text>
+                                </Table.Td>
+
+                                {/* Actions */}
+                                <Table.Td style={{ textAlign: "right" }}>
+                                  <Group gap={4} justify="flex-end" wrap="nowrap">
+                                    <Tooltip
+                                      label={
+                                        lic.status === "active"
+                                          ? "Revoke License Key"
+                                          : "Reactivate License Key"
+                                      }
+                                      withArrow
+                                    >
+                                      <ActionIcon
+                                        variant="subtle"
+                                        color={lic.status === "active" ? "orange" : "teal"}
+                                        size="sm"
+                                        onClick={() => handleToggleLicenseRevoke(lic)}
+                                      >
+                                        {lic.status === "active" ? (
+                                          <IconBan size={15} />
+                                        ) : (
+                                          <IconCheck size={15} />
+                                        )}
+                                      </ActionIcon>
+                                    </Tooltip>
+
+                                    <Tooltip label="Delete License" withArrow>
+                                      <ActionIcon
+                                        variant="subtle"
+                                        color="red"
+                                        size="sm"
+                                        onClick={() => handleDeleteLicense(lic)}
+                                      >
+                                        <IconTrash size={15} />
+                                      </ActionIcon>
+                                    </Tooltip>
+                                  </Group>
+                                </Table.Td>
+                              </Table.Tr>
+                            );
+                          })}
+                        </Table.Tbody>
+                      </Table>
+                    )}
+                  </ScrollArea>
+                </Box>
+              </Tabs.Panel>
+
+              {/* ============================================================ */}
+              {/* TAB 3: CONNECTED DEVICES & PC LOCKS */}
+              {/* ============================================================ */}
+              <Tabs.Panel
+                value="devices"
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <Box p={isMobile ? "xs" : "md"} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  {/* PC & Hardware Access Policy Banner */}
+                  <Paper
+                    p="xs"
+                    mb="sm"
+                    radius="md"
+                    style={{
+                      backgroundColor: "var(--color-bg-card)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+                      <Group gap="xs" align="center">
+                        <IconDeviceDesktop size={20} color="var(--color-neon-primary, #10e57a)" />
+                        <Box>
+                          <Group gap={6} align="center">
+                            <Text size="xs" fw={700}>
+                              PC Access Control:
+                            </Text>
+                            {selectedApp.devicePolicy === "max_devices" ? (
+                              <Badge size="xs" color="blue" variant="filled">
+                                Max {selectedApp.maxDevices || 3} Computers Allowed
+                              </Badge>
+                            ) : selectedApp.devicePolicy === "whitelist_only" ? (
+                              <Badge size="xs" color="purple" variant="filled">
+                                Whitelist Only Mode
+                              </Badge>
+                            ) : (
+                              <Badge size="xs" color="gray" variant="light">
+                                Unrestricted Access
+                              </Badge>
+                            )}
+                          </Group>
+                          <Text size="11px" c="dimmed">
+                            {selectedApp.devicePolicy === "max_devices"
+                              ? `${devices.filter((d) => !d.isLocked).length} of ${selectedApp.maxDevices || 3} PC seats currently claimed. Subsequent computers will be blocked automatically.`
+                              : selectedApp.devicePolicy === "whitelist_only"
+                              ? `Only explicitly registered or pre-approved computers can run the app (${devices.filter((d) => !d.isLocked).length} authorized).`
+                              : "Any computer can access and check for updates unless manually locked."}
+                          </Text>
+                        </Box>
+                      </Group>
+
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="blue"
+                        leftSection={<IconEdit size={14} />}
+                        onClick={() => openAppModal(selectedApp)}
+                      >
+                        Change PC Limit
+                      </Button>
+                    </Group>
+                  </Paper>
+                  <Group justify="space-between" mb="sm" wrap="wrap" gap="xs">
+                    <Group gap="xs" wrap="wrap" style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: 0 }}>
+                      <TextInput
+                        placeholder="Search HWID, PC name, IP, key..."
+                        size="xs"
+                        style={{ flex: isMobile ? "1 1 100%" : "0 0 240px" }}
+                        leftSection={<IconSearch size={14} />}
+                        value={deviceSearch}
+                        onChange={(e) => setDeviceSearch(e.target.value)}
+                        styles={{
+                          input: {
+                            backgroundColor: "var(--color-bg-card)",
+                            borderColor: "var(--color-border)",
+                          },
+                        }}
+                      />
+
+                      <Select
+                        size="xs"
+                        style={{ flex: isMobile ? "1 1 45%" : "0 0 140px" }}
+                        placeholder="Device Lock"
+                        data={[
+                          { value: "all", label: "All Devices" },
+                          { value: "allowed", label: "Allowed PCs" },
+                          { value: "locked", label: "Locked PCs" },
+                        ]}
+                        value={deviceLockedFilter}
+                        onChange={setDeviceLockedFilter}
+                      />
+                    </Group>
+
+                    <Group gap="xs" justify={isMobile ? "flex-end" : "flex-start"} style={{ width: isMobile ? "100%" : "auto" }}>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        color="gray"
+                        leftSection={<IconRefresh size={14} />}
+                        onClick={loadDevices}
+                        loading={loadingDevices}
+                      >
+                        Refresh
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="filled"
+                        color="red"
+                        leftSection={<IconBan size={14} color="#ffffff" />}
+                        onClick={() => openLockDeviceModal()}
+                        style={{ color: "#ffffff" }}
+                        styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                      >
+                        Lock PC / HWID
+                      </Button>
+                    </Group>
+                  </Group>
+
+                  {/* Devices Table */}
+                  <ScrollArea style={{ flex: 1, width: "100%" }} type="auto">
+                    {loadingDevices && devices.length === 0 ? (
+                      <Text size="sm" c="dimmed" ta="center" py="xl">
+                        Loading client devices...
+                      </Text>
+                    ) : filteredDevices.length === 0 ? (
+                      <Box
+                        ta="center"
+                        py="xl"
+                        style={{
+                          border: "1px dashed var(--color-border)",
+                          borderRadius: 12,
+                        }}
+                      >
+                        <IconDeviceDesktop size={40} color="var(--color-text-dimmed)" stroke={1.4} />
+                        <Title order={5} mt="sm" c="dimmed">
+                          No devices connected yet
+                        </Title>
+                        <Text size="xs" c="dimmed" mt={4} mb="md">
+                          Client PCs register automatically when checking updates or activating licenses.
+                        </Text>
+                        <Button
+                          size="xs"
+                          color="red"
+                          leftSection={<IconBan size={14} color="#ffffff" />}
+                          onClick={() => openLockDeviceModal()}
+                          style={{ color: "#ffffff" }}
+                          styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+                        >
+                          Lock a PC / HWID
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Table
+                        striped
+                        highlightOnHover
+                        verticalSpacing="sm"
+                        style={{ minWidth: 720 }}
+                        styles={{
+                          th: {
+                            color: "var(--color-text-dimmed)",
+                            fontSize: "11px",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                          },
+                          td: {
+                            color: "var(--color-text-primary)",
+                            fontSize: "13px",
+                          },
+                        }}
+                      >
+                        <Table.Thead>
+                          <Table.Tr>
+                            <Table.Th>Device ID / HWID</Table.Th>
+                            <Table.Th>PC Name</Table.Th>
+                            <Table.Th>Platform / OS</Table.Th>
+                            <Table.Th>IP Address</Table.Th>
+                            <Table.Th>License Key</Table.Th>
+                            <Table.Th>Status</Table.Th>
+                            <Table.Th>Last Seen</Table.Th>
+                            <Table.Th style={{ textAlign: "right" }}>Actions</Table.Th>
+                          </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                          {filteredDevices.map((dev) => (
+                            <Table.Tr key={dev.id}>
+                              {/* Device ID */}
+                              <Table.Td>
+                                <Group gap={6} align="center" wrap="nowrap">
+                                  <Code
+                                    style={{
+                                      fontFamily: "var(--font-mono)",
+                                      fontSize: "12px",
+                                      fontWeight: 600,
+                                    }}
+                                  >
+                                    {dev.deviceId}
+                                  </Code>
+                                  <Tooltip label="Copy Device ID / HWID" withArrow>
+                                    <ActionIcon
+                                      size="xs"
+                                      variant="subtle"
+                                      color="gray"
+                                      onClick={() =>
+                                        copyToClipboard(dev.deviceId, "Device ID")
+                                      }
+                                    >
+                                      <IconCopy size={13} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                </Group>
+                              </Table.Td>
+
+                              {/* PC Name */}
+                              <Table.Td>
+                                <Text size="xs" fw={600}>
+                                  {dev.deviceName || (
+                                    <Text span c="dimmed">
+                                      Unknown PC
+                                    </Text>
+                                  )}
+                                </Text>
+                              </Table.Td>
+
+                              {/* Platform / OS */}
+                              <Table.Td>
+                                <Badge size="xs" variant="outline" color="gray">
+                                  {dev.platform || dev.osName || "Unknown"}
+                                </Badge>
+                              </Table.Td>
+
+                              {/* IP Address */}
+                              <Table.Td>
+                                <Code style={{ fontSize: "11px" }}>
+                                  {dev.ipAddress || "N/A"}
+                                </Code>
+                              </Table.Td>
+
+                              {/* License Key */}
+                              <Table.Td>
+                                {dev.licenseKey ? (
+                                  <Badge size="xs" variant="dot" color="blue">
+                                    {dev.licenseKey}
+                                  </Badge>
+                                ) : (
+                                  <Text size="11px" c="dimmed">
+                                    None
+                                  </Text>
+                                )}
+                              </Table.Td>
+
+                              {/* Status */}
+                              <Table.Td>
+                                {dev.isLocked ? (
+                                  <Tooltip
+                                    label={dev.lockReason || "Device locked by administrator"}
+                                    withArrow
+                                  >
+                                    <Badge
+                                      size="sm"
+                                      color="red"
+                                      variant="filled"
+                                      leftSection={<IconLock size={12} />}
+                                    >
+                                      Locked
+                                    </Badge>
+                                  </Tooltip>
+                                ) : (
+                                  <Badge
+                                    size="sm"
+                                    color="teal"
+                                    variant="light"
+                                    leftSection={<IconLockOpen size={12} />}
+                                  >
+                                    Allowed
+                                  </Badge>
+                                )}
+                              </Table.Td>
+
+                              {/* Last Seen */}
+                              <Table.Td>
+                                <Text size="11px" c="dimmed">
+                                  {new Date(dev.lastSeenAt).toLocaleString()}
+                                </Text>
+                              </Table.Td>
+
+                              {/* Actions */}
+                              <Table.Td style={{ textAlign: "right" }}>
+                                <Group gap={4} justify="flex-end" wrap="nowrap">
+                                  <Tooltip
+                                    label={dev.isLocked ? "Unlock PC Access" : "Lock / Ban PC"}
+                                    withArrow
+                                  >
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color={dev.isLocked ? "teal" : "red"}
+                                      size="sm"
+                                      onClick={() => handleToggleDeviceLock(dev)}
+                                    >
+                                      {dev.isLocked ? (
+                                        <IconLockOpen size={15} />
+                                      ) : (
+                                        <IconLock size={15} />
+                                      )}
+                                    </ActionIcon>
+                                  </Tooltip>
+
+                                  <Tooltip label="Delete / Unbind Device" withArrow>
+                                    <ActionIcon
+                                      variant="subtle"
+                                      color="red"
+                                      size="sm"
+                                      onClick={() => handleDeleteDevice(dev)}
+                                    >
+                                      <IconTrash size={15} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                </Group>
+                              </Table.Td>
+                            </Table.Tr>
+                          ))}
+                        </Table.Tbody>
+                      </Table>
+                    )}
+                  </ScrollArea>
+                </Box>
+              </Tabs.Panel>
+            </Tabs>
           </>
         )}
       </Box>
@@ -1486,6 +2626,60 @@ export const AppsView: React.FC = () => {
               />
             )}
           </Box>
+
+          {/* PC & Hardware Access Restriction */}
+          <Paper
+            p="sm"
+            radius="md"
+            style={{
+              backgroundColor: "var(--color-bg-card)",
+              border: "1px solid var(--color-border)",
+            }}
+          >
+            <Group justify="space-between" align="center" mb={6}>
+              <Box>
+                <Text size="sm" fw={600}>
+                  PC & Device Access Limit
+                </Text>
+                <Text size="11px" c="dimmed">
+                  Restrict how many computers are allowed to access and run this application
+                </Text>
+              </Box>
+            </Group>
+
+            <Select
+              size="xs"
+              label="Restriction Mode"
+              value={appDevicePolicy}
+              onChange={(val: any) => setAppDevicePolicy(val || "unrestricted")}
+              data={[
+                { value: "unrestricted", label: "Unrestricted (Any PC can run the app)" },
+                { value: "max_devices", label: "Max Device Quota (Only allow a few PCs)" },
+                { value: "whitelist_only", label: "Whitelist Only (Pre-approved PCs only)" },
+              ]}
+              mb="xs"
+            />
+
+            {appDevicePolicy === "max_devices" && (
+              <NumberInput
+                size="xs"
+                label="Maximum Allowed PCs"
+                description="The first N computers to run the app claim seats. Subsequent PCs will be blocked automatically."
+                value={appMaxDevices}
+                onChange={(val) =>
+                  setAppMaxDevices(typeof val === "number" ? Math.max(1, val) : 3)
+                }
+                min={1}
+                max={1000}
+              />
+            )}
+
+            {appDevicePolicy === "whitelist_only" && (
+              <Text size="xs" c="orange">
+                Notice: In whitelist mode, client computers will be blocked until you manually register or approve their Hardware ID (HWID) in the Connected Devices table.
+              </Text>
+            )}
+          </Paper>
 
           <Group justify="flex-end" mt="md">
             <Button variant="default" onClick={() => setIsAppModalOpen(false)}>
@@ -1712,7 +2906,7 @@ export const AppsView: React.FC = () => {
                 Simulate how your client application calls AlsaBase to check for updates.
               </Text>
 
-              <SimpleGrid cols={{ base: 1, sm: 3 }}>
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <TextInput
                   label="Current App Version"
                   placeholder="e.g. 1.0.0"
@@ -1740,6 +2934,14 @@ export const AppsView: React.FC = () => {
                   value={simChannel}
                   onChange={(e) => setSimChannel(e.target.value)}
                 />
+
+                <TextInput
+                  label="Device ID / HWID (Optional)"
+                  placeholder="e.g. PC-HWID-98234"
+                  value={simDeviceId}
+                  onChange={(e) => setSimDeviceId(e.target.value)}
+                  description="Test device lock check alongside update check"
+                />
               </SimpleGrid>
 
               <Button
@@ -1750,8 +2952,49 @@ export const AppsView: React.FC = () => {
                 style={{ backgroundColor: "var(--color-neon-primary, #10e57a)", color: "#ffffff" }}
                 styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
               >
-                Run Update Check
+                Run Update & Device Check
               </Button>
+
+              {/* Device Check Result if device ID was supplied */}
+              {simDeviceCheckResult && (
+                <Paper
+                  p="sm"
+                  radius="md"
+                  style={{
+                    backgroundColor: "var(--color-bg-card)",
+                    border: simDeviceCheckResult.isLocked
+                      ? "1px solid red"
+                      : "1px solid var(--color-neon-primary)",
+                  }}
+                >
+                  <Group justify="space-between" align="center">
+                    <Group gap="xs">
+                      <Badge
+                        size="md"
+                        color={simDeviceCheckResult.isLocked ? "red" : "teal"}
+                        variant="filled"
+                        leftSection={
+                          simDeviceCheckResult.isLocked ? (
+                            <IconLock size={13} />
+                          ) : (
+                            <IconLockOpen size={13} />
+                          )
+                        }
+                      >
+                        {simDeviceCheckResult.isLocked ? "PC is LOCKED" : "PC is ALLOWED"}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        Device ID: <Code>{simDeviceId}</Code>
+                      </Text>
+                    </Group>
+                    {simDeviceCheckResult.isLocked && (
+                      <Text size="xs" c="red" fw={600}>
+                        Reason: {simDeviceCheckResult.lockReason || "Access blocked"}
+                      </Text>
+                    )}
+                  </Group>
+                </Paper>
+              )}
 
               {simResult && (
                 <Paper
@@ -1844,7 +3087,7 @@ export const AppsView: React.FC = () => {
             <Stack gap="sm">
               <Group justify="space-between">
                 <Text size="xs" c="dimmed">
-                  Use the official <Code>alsabase</Code> npm package to integrate auto-updates:
+                  Use the official <Code>alsabase</Code> npm package to check updates, manage licenses, and lock PCs:
                 </Text>
                 <Button
                   size="xs"
@@ -1856,26 +3099,36 @@ export const AppsView: React.FC = () => {
 
 const client = new AlsaBase("${window.location.origin}");
 
-// 1. Check for application update
+// 1. Check if this PC / machine is allowed or locked
+const deviceCheck = await client.apps.checkDevice("${selectedApp?.slug}", "PC-HWID-12345");
+if (deviceCheck.isLocked) {
+  throw new Error("This computer has been locked: " + (deviceCheck.lockReason || "Access denied"));
+}
+
+// 2. Check for application update (pass deviceId to automatically block locked PCs)
 const update = await client.checkAppUpdate("${selectedApp?.slug}", {
   currentVersion: "1.0.0",
-  platform: "windows"
+  platform: "windows",
+  deviceId: "PC-HWID-12345"
 });
 
 if (update.hasUpdate) {
   console.log("New version available:", update.latestVersion);
-  
   if (update.isAutomatic) {
-    // Automatic update: install immediately without prompting user
     console.log("Automatic / mandatory update - applying now...");
   } else {
-    // Optional update: prompt user with update.releaseNotes
-    console.log("Optional update:", update.releaseNotes);
+    console.log("Optional update notes:", update.releaseNotes);
   }
+}
 
-  // Direct download binary URL
-  console.log("Download binary:", update.version?.downloadUrl);
-}`;
+// 3. Activate a license serial key for this PC
+const activation = await client.apps.activateLicense("${selectedApp?.slug}", {
+  key: "XXXX-XXXX-XXXX-XXXX",
+  deviceId: "PC-HWID-12345",
+  deviceName: "Workstation-1",
+  platform: "windows"
+});
+console.log("License status:", activation.license.status);`;
                     copyToClipboard(code, "SDK code");
                     setCopiedCode(true);
                     setTimeout(() => setCopiedCode(false), 2000);
@@ -1890,28 +3143,36 @@ if (update.hasUpdate) {
 
 const client = new AlsaBase("${window.location.origin}");
 
-// 1. Check for application update
+// 1. Check if this PC / machine is allowed or locked
+const deviceCheck = await client.apps.checkDevice("${selectedApp?.slug}", "PC-HWID-12345");
+if (deviceCheck.isLocked) {
+  throw new Error("This computer has been locked: " + (deviceCheck.lockReason || "Access denied"));
+}
+
+// 2. Check for application update
 const update = await client.checkAppUpdate("${selectedApp?.slug}", {
   currentVersion: "1.0.0",
-  platform: "windows" // windows, macos, linux, android, ios
+  platform: "windows",
+  deviceId: "PC-HWID-12345"
 });
 
 if (update.hasUpdate) {
   console.log("New version available:", update.latestVersion);
-  
   if (update.isAutomatic) {
-    // Automatic update: install immediately without asking user
     console.log("Automatic update - downloading immediately...");
   } else {
-    // Optional update: prompt user
     console.log("Optional update:", update.releaseNotes);
   }
-
-  console.log("Download URL:", update.version?.downloadUrl);
 }
 
-// 2. Or list all eligible versions for the authenticated user
-const versions = await client.apps.getVersions("${selectedApp?.slug}");`}
+// 3. Activate a license serial key for this PC
+const activation = await client.apps.activateLicense("${selectedApp?.slug}", {
+  key: "XXXX-XXXX-XXXX-XXXX",
+  deviceId: "PC-HWID-12345",
+  deviceName: "Workstation-1",
+  platform: "windows"
+});
+console.log("License status:", activation.license.status);`}
               </Code>
             </Stack>
           </Tabs.Panel>
@@ -1920,7 +3181,7 @@ const versions = await client.apps.getVersions("${selectedApp?.slug}");`}
           <Tabs.Panel value="api">
             <Stack gap="xs">
               <Text size="xs" c="dimmed">
-                Direct HTTP API endpoints for version checks and downloads:
+                Direct HTTP API endpoints for version releases, licenses, and PC locks:
               </Text>
 
               <Paper p="xs" radius="md" style={{ backgroundColor: "var(--color-bg-card)" }}>
@@ -1928,39 +3189,220 @@ const versions = await client.apps.getVersions("${selectedApp?.slug}");`}
                   GET /api/apps/{selectedApp?.slug}/check-update
                 </Text>
                 <Text size="11px" c="dimmed" mt={2}>
-                  Query params: <Code>?currentVersion=1.0.0&platform=windows&channel=beta</Code>
+                  Query params: <Code>?currentVersion=1.0.0&platform=windows&channel=stable&deviceId=PC-HWID</Code>
                 </Text>
               </Paper>
 
               <Paper p="xs" radius="md" style={{ backgroundColor: "var(--color-bg-card)" }}>
                 <Text size="xs" fw={700} c="teal">
-                  GET /api/apps/{selectedApp?.slug}/versions
+                  GET /api/apps/{selectedApp?.slug}/devices/check
                 </Text>
                 <Text size="11px" c="dimmed" mt={2}>
-                  List all eligible versions matching requesting user&apos;s column access rules.
+                  Check whether a PC / hardware ID is locked. Returns <Code>{`{ allowed: boolean, isLocked: boolean }`}</Code>
                 </Text>
               </Paper>
 
               <Paper p="xs" radius="md" style={{ backgroundColor: "var(--color-bg-card)" }}>
                 <Text size="xs" fw={700} c="teal">
-                  GET /api/apps/{selectedApp?.slug}/versions/:version/download
+                  POST /api/apps/{selectedApp?.slug}/licenses/activate
                 </Text>
                 <Text size="11px" c="dimmed" mt={2}>
-                  Direct binary installer / archive download stream.
+                  Activate a serial key for a client PC hardware ID. Body: <Code>{`{ key, deviceId, deviceName?, platform? }`}</Code>
+                </Text>
+              </Paper>
+
+              <Paper p="xs" radius="md" style={{ backgroundColor: "var(--color-bg-card)" }}>
+                <Text size="xs" fw={700} c="teal">
+                  POST /api/apps/{selectedApp?.slug}/licenses/validate
+                </Text>
+                <Text size="11px" c="dimmed" mt={2}>
+                  Validate whether a serial key or device activation remains active and valid.
                 </Text>
               </Paper>
 
               <Paper p="xs" radius="md" style={{ backgroundColor: "var(--color-bg-card)" }}>
                 <Text size="xs" fw={700} c="orange">
-                  POST /api/apps/manage/versions (Superuser Only)
+                  POST /api/apps/manage/licenses (Superuser)
                 </Text>
                 <Text size="11px" c="dimmed" mt={2}>
-                  Upload and publish new app version with binary payload in base64.
+                  Generate single or batch license keys with custom activation limits and expiration.
+                </Text>
+              </Paper>
+
+              <Paper p="xs" radius="md" style={{ backgroundColor: "var(--color-bg-card)" }}>
+                <Text size="xs" fw={700} c="orange">
+                  POST /api/apps/manage/devices/lock (Superuser)
+                </Text>
+                <Text size="11px" c="dimmed" mt={2}>
+                  Pre-ban or lock a client PC hardware identifier with reason.
                 </Text>
               </Paper>
             </Stack>
           </Tabs.Panel>
         </Tabs>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* MODAL: Generate License Keys */}
+      {/* ==================================================================== */}
+      <Modal
+        opened={isLicenseModalOpen}
+        onClose={() => setIsLicenseModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <IconKey size={20} color="var(--color-neon-primary, #10e57a)" />
+            <Text fw={700}>Generate License Keys - {selectedApp?.name}</Text>
+          </Group>
+        }
+        radius="md"
+        size={isMobile ? "100%" : "lg"}
+        fullScreen={isMobile}
+      >
+        <Stack gap="md">
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <NumberInput
+              label="Number of Keys to Generate"
+              description="Create a single key or batch generate up to 100"
+              value={licCount}
+              onChange={(val) => setLicCount(typeof val === "number" ? Math.max(1, Math.min(100, val)) : 1)}
+              min={1}
+              max={100}
+            />
+
+            <NumberInput
+              label="Max PC Activations per Key"
+              description="How many devices can activate each key simultaneously"
+              value={licMaxActivations}
+              onChange={(val) => setLicMaxActivations(typeof val === "number" ? Math.max(1, val) : 1)}
+              min={1}
+            />
+          </SimpleGrid>
+
+          {licCount === 1 ? (
+            <TextInput
+              label="Custom Serial Key (Optional)"
+              placeholder="Leave blank to auto-generate (e.g. ABCD-EFGH-IJKL-MNOP)"
+              value={licCustomKey}
+              onChange={(e) => setLicCustomKey(e.target.value.toUpperCase())}
+            />
+          ) : (
+            <TextInput
+              label="Key Format Pattern"
+              placeholder="XXXX-XXXX-XXXX-XXXX"
+              value={licFormat}
+              onChange={(e) => setLicFormat(e.target.value)}
+              description="Pattern with 'X' placeholders for random alphanumeric characters"
+            />
+          )}
+
+          <TextInput
+            label="Expiration Date (Optional)"
+            placeholder="YYYY-MM-DD (e.g. 2027-12-31)"
+            description="Leave blank for Lifetime (no expiration)"
+            value={licExpiresAt}
+            onChange={(e) => setLicExpiresAt(e.target.value)}
+          />
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <TextInput
+              label="Customer Name (Optional)"
+              placeholder="e.g. Acme Corporation"
+              value={licCustomerName}
+              onChange={(e) => setLicCustomerName(e.target.value)}
+            />
+
+            <TextInput
+              label="Customer Email (Optional)"
+              placeholder="e.g. license@acme.com"
+              value={licCustomerEmail}
+              onChange={(e) => setLicCustomerEmail(e.target.value)}
+            />
+          </SimpleGrid>
+
+          <Textarea
+            label="Internal Notes (Optional)"
+            placeholder="Order number, invoice ID, or agreement terms..."
+            rows={2}
+            value={licNotes}
+            onChange={(e) => setLicNotes(e.target.value)}
+          />
+
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={() => setIsLicenseModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="teal"
+              loading={savingLicenses}
+              onClick={handleCreateLicensesSubmit}
+              style={{ backgroundColor: "var(--color-neon-primary, #10e57a)", color: "#ffffff" }}
+              styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+            >
+              Generate {licCount} Key{licCount > 1 ? "s" : ""}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* ==================================================================== */}
+      {/* MODAL: Lock Client PC / HWID */}
+      {/* ==================================================================== */}
+      <Modal
+        opened={isLockModalOpen}
+        onClose={() => setIsLockModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <IconBan size={20} color="red" />
+            <Text fw={700}>Lock Client PC / HWID - {selectedApp?.name}</Text>
+          </Group>
+        }
+        radius="md"
+        size={isMobile ? "100%" : "md"}
+        fullScreen={isMobile}
+      >
+        <Stack gap="md">
+          <Text size="xs" c="dimmed">
+            Locking a computer prevents it from checking for application updates, downloading binaries, and activating serial keys. The device will be blocked with HTTP 403 Forbidden.
+          </Text>
+
+          <TextInput
+            label="Hardware ID / Device ID"
+            placeholder="e.g. PC-HWID-12345 or MAC address"
+            required
+            value={lockDeviceId}
+            onChange={(e) => setLockDeviceId(e.target.value)}
+          />
+
+          <TextInput
+            label="Device / PC Name (Optional)"
+            placeholder="e.g. Workstation-A / John's Laptop"
+            value={lockDeviceName}
+            onChange={(e) => setLockDeviceName(e.target.value)}
+          />
+
+          <Textarea
+            label="Lock Reason"
+            placeholder="e.g. Subscription terminated, unauthorized redistribution, or security block"
+            rows={3}
+            value={lockReason}
+            onChange={(e) => setLockReason(e.target.value)}
+          />
+
+          <Group justify="flex-end" mt="sm">
+            <Button variant="default" onClick={() => setIsLockModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              loading={savingLock}
+              onClick={handleLockDeviceSubmit}
+              style={{ color: "#ffffff" }}
+              styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
+            >
+              Confirm Lock PC
+            </Button>
+          </Group>
+        </Stack>
       </Modal>
     </Box>
   );

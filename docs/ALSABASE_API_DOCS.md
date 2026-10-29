@@ -548,12 +548,13 @@ Lists active applications with basic statistics.
 Gets metadata for a specific application by its slug or ID.
 
 #### `GET /api/apps/:slug/check-update`
-Checks if a newer release is available for an app.
+Checks if a newer release is available for an app. If `deviceId` is provided and the device is locked, returns HTTP 403 Forbidden.
 
 - **Query Parameters**:
   - `currentVersion` (string, required): Current installed version (e.g. `1.0.0`).
   - `platform` (string, optional): Target platform (`windows`, `macos`, `linux`, `android`, `ios`, `all`).
   - `channel` (string, optional): Release channel filter (`stable`, `beta`, `alpha`, `latest`).
+  - `deviceId` (string, optional): Hardware / machine identifier. If this device is locked, returns HTTP 403 Forbidden.
 - **Response**: `200 OK`
   ```json
   {
@@ -583,6 +584,89 @@ Checks if a newer release is available for an app.
   }
   ```
 
+#### `GET /api/apps/:slug/devices/check`
+Checks if a specific client computer / hardware device is permitted or locked from using the application.
+
+- **Query Parameters**:
+  - `deviceId` (string, required): Hardware identifier / MAC address / machine GUID.
+- **Response**: `200 OK`
+  ```json
+  {
+    "allowed": true,
+    "isLocked": false,
+    "lockReason": null,
+    "device": {
+      "deviceId": "PC-HWID-98234",
+      "deviceName": "Workstation-1",
+      "isLocked": false
+    }
+  }
+  ```
+  If locked:
+  ```json
+  {
+    "allowed": false,
+    "isLocked": true,
+    "lockReason": "Subscription expired or violation of terms"
+  }
+  ```
+
+#### `POST /api/apps/:slug/licenses/activate`
+Activates a license serial key for a specific client PC / device.
+
+- **Body**:
+  ```json
+  {
+    "key": "ABCD-EFGH-IJKL-MNOP",
+    "deviceId": "PC-HWID-98234",
+    "deviceName": "Workstation-1",
+    "osName": "Windows 11 Pro",
+    "platform": "windows"
+  }
+  ```
+- **Response**: `200 OK`
+  ```json
+  {
+    "success": true,
+    "activated": true,
+    "message": "License activated successfully for this device",
+    "license": {
+      "id": "lic_123",
+      "serialKey": "ABCD-EFGH-IJKL-MNOP",
+      "status": "active",
+      "maxActivations": 3,
+      "activatedCount": 1
+    },
+    "device": {
+      "deviceId": "PC-HWID-98234",
+      "deviceName": "Workstation-1",
+      "isLocked": false
+    }
+  }
+  ```
+
+#### `POST /api/apps/:slug/licenses/validate`
+Validates an existing serial key or checks if a device holds an active valid activation.
+
+- **Body**:
+  ```json
+  {
+    "deviceId": "PC-HWID-98234",
+    "key": "ABCD-EFGH-IJKL-MNOP"
+  }
+  ```
+
+#### `POST /api/apps/:slug/licenses/deactivate`
+Deactivates a serial key from a device, freeing up an activation slot.
+
+- **Body**:
+  ```json
+  {
+    "key": "ABCD-EFGH-IJKL-MNOP",
+    "deviceId": "PC-HWID-98234"
+  }
+  ```
+
 #### `GET /api/apps/:slug/versions`
 Lists all releases for the application.
 
@@ -609,12 +693,28 @@ Registers a new application.
     "name": "Desktop Client",
     "slug": "desktop-client",
     "description": "Cross-platform desktop application",
-    "iconUrl": "https://example.com/icon.png"
+    "iconUrl": "https://example.com/icon.png",
+    "maxDevices": 5,
+    "devicePolicy": "max_devices"
   }
   ```
+- **Policy Modes**:
+  - `unrestricted`: Any PC/hardware can access the app (default).
+  - `max_devices`: App can only run on up to `maxDevices` distinct PCs. Subsequent unknown PCs are rejected with `403 Forbidden` (`PC_LIMIT_REACHED`).
+  - `whitelist_only`: Only pre-approved computers in the devices table can access the app (`WHITELIST_REQUIRED`).
 
 #### `PUT /api/apps/manage/apps/:id`
-Updates application metadata.
+Updates application metadata, icon, or device restriction policy.
+- **Body**:
+  ```json
+  {
+    "name": "Desktop Client",
+    "slug": "desktop-client",
+    "description": "Updated description",
+    "maxDevices": 3,
+    "devicePolicy": "max_devices"
+  }
+  ```
 
 #### `DELETE /api/apps/manage/apps/:id`
 Deletes an application, all its releases, and all physical binary files from disk.
@@ -650,6 +750,52 @@ Updates release metadata (importance, channel, active status, release notes).
 
 #### `DELETE /api/apps/manage/versions/:id`
 Deletes a release record and removes its physical binary file from storage.
+
+#### `GET /api/apps/manage/licenses`
+Lists issued licenses for an app with optional `?appId=...`, `?status=...`, and `?search=...`.
+
+#### `POST /api/apps/manage/licenses`
+Generates single or batch license keys with custom format, activation limit, and expiration.
+- **Body**:
+  ```json
+  {
+    "appId": "app_123",
+    "count": 10,
+    "format": "XXXX-XXXX-XXXX-XXXX",
+    "maxActivations": 3,
+    "expiresAt": "2027-12-31T23:59:59.000Z",
+    "customerName": "Acme Corp",
+    "customerEmail": "licenses@acme.com",
+    "notes": "Enterprise contract #849"
+  }
+  ```
+
+#### `PUT /api/apps/manage/licenses/:id`
+Updates a license's status (`active`, `revoked`, `suspended`, `expired`), customer metadata, or activation limit.
+
+#### `DELETE /api/apps/manage/licenses/:id`
+Permanently deletes a license and unbinds all associated client devices.
+
+#### `GET /api/apps/manage/devices`
+Lists registered devices / PCs for an application with optional `?appId=...`, `?isLocked=true|false`, and `?search=...`.
+
+#### `POST /api/apps/manage/devices/lock`
+Pre-bans or locks a client hardware ID with a custom lock reason.
+- **Body**:
+  ```json
+  {
+    "appId": "app_123",
+    "deviceId": "PC-HWID-98234",
+    "deviceName": "Workstation-A",
+    "reason": "Unauthorized access or violation of terms"
+  }
+  ```
+
+#### `PUT /api/apps/manage/devices/:id/lock`
+Toggles lock status on an existing registered device (`{ "isLocked": true|false, "reason": "..." }`).
+
+#### `DELETE /api/apps/manage/devices/:id`
+Deletes and unbinds a device record from the registry.
 
 ---
 

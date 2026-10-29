@@ -222,9 +222,15 @@ export interface AppItem {
   slug: string;
   description?: string;
   iconUrl?: string | null;
+  maxDevices?: number | null;
+  devicePolicy?: "unrestricted" | "max_devices" | "whitelist_only";
   totalReleases: number;
   totalDownloads: number;
   totalStorageBytes?: number;
+  totalLicenses?: number;
+  activeLicenses?: number;
+  totalDevices?: number;
+  lockedDevices?: number;
   latestVersion?: string | null;
   latestImportance?: string | null;
   latestChannel?: string | null;
@@ -268,6 +274,68 @@ export interface AppUpdateCheckResult {
   releaseNotes?: string | null;
   downloadUrl?: string | null;
   version?: AppVersionItem | null;
+}
+
+export interface AppLicenseItem {
+  id: string;
+  appId: string;
+  appSlug: string;
+  serialKey: string;
+  status: "active" | "suspended" | "revoked" | "expired";
+  customerName?: string | null;
+  customerEmail?: string | null;
+  maxActivations: number;
+  activatedCount: number;
+  expiresAt?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppDeviceItem {
+  id: string;
+  appId: string;
+  appSlug: string;
+  deviceId: string;
+  deviceName?: string | null;
+  licenseId?: string | null;
+  licenseKey?: string | null;
+  osName?: string | null;
+  platform?: string | null;
+  ipAddress?: string | null;
+  isLocked: boolean;
+  lockReason?: string | null;
+  lockedAt?: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppLicenseValidateResult {
+  valid: boolean;
+  status: string;
+  message?: string;
+  license?: AppLicenseItem;
+  device?: AppDeviceItem;
+}
+
+export interface AppLicenseActivateResult {
+  success: boolean;
+  activated: boolean;
+  message: string;
+  license: AppLicenseItem;
+  device: AppDeviceItem;
+}
+
+export interface AppDeviceCheckResult {
+  allowed: boolean;
+  isLocked: boolean;
+  isRegistered?: boolean;
+  limitReached?: boolean;
+  error?: string;
+  lockReason?: string | null;
+  device?: AppDeviceItem | null;
 }
 
 const API_BASE = "/api";
@@ -1049,6 +1117,8 @@ export const api = {
     description?: string;
     iconUrl?: string;
     iconFile?: { name: string; data: string; size?: number; type?: string } | string;
+    maxDevices?: number | null;
+    devicePolicy?: "unrestricted" | "max_devices" | "whitelist_only";
   }) {
     return request<AppItem>("/apps/manage/apps", {
       method: "POST",
@@ -1064,6 +1134,8 @@ export const api = {
       description?: string;
       iconUrl?: string;
       iconFile?: { name: string; data: string; size?: number; type?: string } | string;
+      maxDevices?: number | null;
+      devicePolicy?: "unrestricted" | "max_devices" | "whitelist_only";
     },
   ) {
     return request<AppItem>(`/apps/manage/apps/${id}`, {
@@ -1134,6 +1206,144 @@ export const api = {
     if (params.channel) searchParams.append("channel", params.channel);
     return request<AppUpdateCheckResult>(
       `/apps/${encodeURIComponent(appSlug)}/check-update?${searchParams.toString()}`,
+    );
+  },
+
+  // Licenses & Devices
+  async getAppLicenses(appIdOrSlug: string, params?: { search?: string; status?: string }) {
+    const searchParams = new URLSearchParams();
+    searchParams.append("appId", appIdOrSlug);
+    if (params?.search) searchParams.append("search", params.search);
+    if (params?.status) searchParams.append("status", params.status);
+    return request<{ items: AppLicenseItem[]; total: number }>(
+      `/apps/manage/licenses?${searchParams.toString()}`,
+    );
+  },
+
+  async createAppLicenses(payload: {
+    appId?: string;
+    appSlug?: string;
+    count?: number;
+    serialKey?: string;
+    format?: string;
+    maxActivations?: number;
+    expiresAt?: string;
+    customerName?: string;
+    customerEmail?: string;
+    notes?: string;
+    metadata?: any;
+  }) {
+    return request<{
+      success: boolean;
+      createdCount: number;
+      licenses: AppLicenseItem[];
+    }>("/apps/manage/licenses", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async updateAppLicense(id: string, payload: Partial<AppLicenseItem>) {
+    return request<AppLicenseItem>(`/apps/manage/licenses/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteAppLicense(id: string) {
+    return request<{ success: boolean; message: string }>(
+      `/apps/manage/licenses/${id}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  async getAppDevices(appIdOrSlug: string, params?: { search?: string; isLocked?: boolean }) {
+    const searchParams = new URLSearchParams();
+    searchParams.append("appId", appIdOrSlug);
+    if (params?.search) searchParams.append("search", params.search);
+    if (params?.isLocked !== undefined) searchParams.append("isLocked", String(params.isLocked));
+    return request<{ items: AppDeviceItem[]; total: number }>(
+      `/apps/manage/devices?${searchParams.toString()}`,
+    );
+  },
+
+  async lockAppDevice(payload: {
+    appId?: string;
+    appSlug?: string;
+    deviceId: string;
+    deviceName?: string;
+    isLocked?: boolean;
+    reason?: string;
+  }) {
+    return request<AppDeviceItem>("/apps/manage/devices/lock", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async toggleAppDeviceLock(id: string, isLocked: boolean, reason?: string) {
+    return request<AppDeviceItem>(`/apps/manage/devices/${id}/lock`, {
+      method: "PUT",
+      body: JSON.stringify({ isLocked, reason }),
+    });
+  },
+
+  async deleteAppDevice(id: string) {
+    return request<{ success: boolean; message: string }>(
+      `/apps/manage/devices/${id}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  async validateAppLicense(appSlug: string, payload: { key?: string; deviceId: string }) {
+    return request<AppLicenseValidateResult>(
+      `/apps/${encodeURIComponent(appSlug)}/licenses/validate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  async activateAppLicense(
+    appSlug: string,
+    payload: {
+      key: string;
+      deviceId: string;
+      deviceName?: string;
+      osName?: string;
+      platform?: string;
+    },
+  ) {
+    return request<AppLicenseActivateResult>(
+      `/apps/${encodeURIComponent(appSlug)}/licenses/activate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  async deactivateAppLicense(
+    appSlug: string,
+    payload: { key: string; deviceId: string },
+  ) {
+    return request<{ success: boolean; message: string; license?: AppLicenseItem }>(
+      `/apps/${encodeURIComponent(appSlug)}/licenses/deactivate`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  async checkAppDevice(appSlug: string, deviceId: string) {
+    return request<AppDeviceCheckResult>(
+      `/apps/${encodeURIComponent(appSlug)}/devices/check?deviceId=${encodeURIComponent(deviceId)}`,
     );
   },
 };

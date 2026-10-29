@@ -354,8 +354,14 @@ export interface AppModel {
   slug: string;
   description?: string;
   iconUrl?: string | null;
+  maxDevices?: number | null;
+  devicePolicy?: "unrestricted" | "max_devices" | "whitelist_only";
   totalReleases?: number;
   totalDownloads?: number;
+  totalLicenses?: number;
+  activeLicenses?: number;
+  totalDevices?: number;
+  lockedDevices?: number;
   latestVersion?: string | null;
   latestReleaseAt?: string | null;
   createdAt?: string;
@@ -390,6 +396,69 @@ export interface AppUpdateCheckOptions extends CommonOptions {
   currentVersion: string;
   platform?: string;
   channel?: string;
+  deviceId?: string;
+}
+
+export interface AppLicenseModel {
+  id: string;
+  appId: string;
+  appSlug: string;
+  serialKey: string;
+  status: "active" | "suspended" | "revoked" | "expired";
+  customerName?: string | null;
+  customerEmail?: string | null;
+  maxActivations: number;
+  activatedCount: number;
+  expiresAt?: string | null;
+  notes?: string | null;
+  metadata?: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppDeviceModel {
+  id: string;
+  appId: string;
+  appSlug: string;
+  deviceId: string;
+  deviceName?: string | null;
+  licenseId?: string | null;
+  licenseKey?: string | null;
+  osName?: string | null;
+  platform?: string | null;
+  ipAddress?: string | null;
+  isLocked: boolean;
+  lockReason?: string | null;
+  lockedAt?: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppLicenseValidateResult {
+  valid: boolean;
+  status: string;
+  message?: string;
+  license?: AppLicenseModel;
+  device?: AppDeviceModel;
+}
+
+export interface AppLicenseActivateResult {
+  success: boolean;
+  activated: boolean;
+  message: string;
+  license: AppLicenseModel;
+  device: AppDeviceModel;
+}
+
+export interface AppDeviceCheckResult {
+  allowed: boolean;
+  isLocked: boolean;
+  isRegistered?: boolean;
+  limitReached?: boolean;
+  error?: string;
+  lockReason?: string | null;
+  device?: AppDeviceModel;
 }
 
 export interface AppUpdateCheckResult {

@@ -111,6 +111,8 @@ export function initSystemTables() {
       slug TEXT UNIQUE NOT NULL,
       description TEXT,
       icon_url TEXT,
+      max_devices INTEGER DEFAULT NULL,
+      device_policy TEXT DEFAULT 'unrestricted',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -141,6 +143,46 @@ export function initSystemTables() {
       FOREIGN KEY (app_id) REFERENCES _apps(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS _app_licenses (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      app_slug TEXT NOT NULL,
+      serial_key TEXT UNIQUE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      customer_name TEXT,
+      customer_email TEXT,
+      max_activations INTEGER DEFAULT 1,
+      activated_count INTEGER DEFAULT 0,
+      expires_at TEXT,
+      notes TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (app_id) REFERENCES _apps(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS _app_devices (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      app_slug TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      device_name TEXT,
+      license_id TEXT,
+      license_key TEXT,
+      os_name TEXT,
+      platform TEXT,
+      ip_address TEXT,
+      is_locked INTEGER DEFAULT 0,
+      lock_reason TEXT,
+      locked_at TEXT,
+      last_seen_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(app_id, device_id),
+      FOREIGN KEY (app_id) REFERENCES _apps(id) ON DELETE CASCADE,
+      FOREIGN KEY (license_id) REFERENCES _app_licenses(id) ON DELETE SET NULL
+    );
+
     -- Performance Indexes
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON _logs(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_logs_level ON _logs(level);
@@ -154,11 +196,31 @@ export function initSystemTables() {
     CREATE INDEX IF NOT EXISTS idx_app_releases_app_slug ON _app_releases(app_slug);
     CREATE INDEX IF NOT EXISTS idx_app_releases_version ON _app_releases(version);
     CREATE INDEX IF NOT EXISTS idx_app_releases_channel ON _app_releases(channel);
+    CREATE INDEX IF NOT EXISTS idx_app_licenses_app_id ON _app_licenses(app_id);
+    CREATE INDEX IF NOT EXISTS idx_app_licenses_key ON _app_licenses(serial_key);
+    CREATE INDEX IF NOT EXISTS idx_app_licenses_status ON _app_licenses(status);
+    CREATE INDEX IF NOT EXISTS idx_app_devices_app_id ON _app_devices(app_id);
+    CREATE INDEX IF NOT EXISTS idx_app_devices_device_id ON _app_devices(device_id);
+    CREATE INDEX IF NOT EXISTS idx_app_devices_license_id ON _app_devices(license_id);
+    CREATE INDEX IF NOT EXISTS idx_app_devices_is_locked ON _app_devices(is_locked);
   `);
 }
 
 // Ensure system tables are ready on load
 initSystemTables();
+
+// Safe schema migrations for _apps columns
+try {
+  const appCols = db.prepare("PRAGMA table_info(_apps)").all() as { name: string }[];
+  if (!appCols.some((c) => c.name === "max_devices")) {
+    db.prepare("ALTER TABLE _apps ADD COLUMN max_devices INTEGER DEFAULT NULL").run();
+  }
+  if (!appCols.some((c) => c.name === "device_policy")) {
+    db.prepare("ALTER TABLE _apps ADD COLUMN device_policy TEXT DEFAULT 'unrestricted'").run();
+  }
+} catch (e) {
+  console.error("Migration error adding device limit columns to _apps:", e);
+}
 
 // Scrypt password hashing
 export function hashPassword(password: string): string {

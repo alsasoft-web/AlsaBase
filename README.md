@@ -179,7 +179,9 @@ AlsaBase provides a native version control and release distribution engine for c
 - **Update Importance**: Configure releases as **Automatic (Mandatory)** (installs silently / does not ask the user) or **Optional** (prompts the user with release notes).
 - **Channels & Platforms**: Segment releases by channels (e.g. `stable`, `beta`, `alpha`, `nightly`) and target operating systems (`windows`, `macos`, `linux`, `android`, `ios`).
 - **Binary Storage**: Attach installers and packages (`.exe`, `.dmg`, `.apk`, `.zip`, `.tar.gz`, `.msi`) with automatic SHA-256 checksum calculation and download counting.
-- **REST APIs & SDK Support**: Check for updates and download packages with simple API calls or SDK methods.
+- **License Key Management**: Generate single or batch serial keys with configurable simultaneous PC activation limits, lifetime or custom expiration dates, and customer details.
+- **Device & PC Locking**: Track connected machines by hardware identifier (HWID/MAC/GUID), view OS and IP metadata, and lock/ban specific computers from accessing updates or activating serial keys.
+- **REST APIs & SDK Support**: Check for updates, validate licenses, and inspect device lock status with simple API calls or SDK methods.
 
 ```typescript
 import AlsaBase from "alsabase";

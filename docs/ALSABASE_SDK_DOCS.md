@@ -645,6 +645,76 @@ await ab.apps.updateVersion(release.id, {
 await ab.apps.deleteVersion(release.id);
 ```
 
+### Device Locking & Hardware Protection
+
+Protect your application by verifying client hardware identifiers and preventing banned computers from accessing updates:
+
+```typescript
+// Check if a client device is locked / banned
+const deviceCheck = await ab.apps.checkDevice("desktop-app", "PC-HWID-98234");
+if (deviceCheck.isLocked) {
+  throw new Error("This computer has been locked: " + (deviceCheck.lockReason || "Access prohibited"));
+}
+
+// Pass deviceId into update checks for automatic hardware-lock blocking
+const update = await ab.checkAppUpdate("desktop-app", {
+  currentVersion: "1.0.0",
+  platform: "windows",
+  deviceId: "PC-HWID-98234",
+});
+```
+
+### Serial Key & License Activation
+
+Issue serial numbers with device activation limits and validate client PC licenses:
+
+```typescript
+// 1. Activate a license key on a client machine
+const activation = await ab.apps.activateLicense("desktop-app", {
+  key: "ABCD-EFGH-IJKL-MNOP",
+  deviceId: "PC-HWID-98234",
+  deviceName: "John's Workstation",
+  platform: "windows",
+});
+
+console.log("License status:", activation.license.status);
+console.log("Activations used:", activation.license.activatedCount, "/", activation.license.maxActivations);
+
+// 2. Validate license validity on launch
+const check = await ab.apps.validateLicense("desktop-app", {
+  key: "ABCD-EFGH-IJKL-MNOP",
+  deviceId: "PC-HWID-98234",
+});
+
+if (!check.valid) {
+  console.log("License invalid or expired:", check.message);
+}
+
+// 3. Deactivate license from a computer
+await ab.apps.deactivateLicense("desktop-app", {
+  key: "ABCD-EFGH-IJKL-MNOP",
+  deviceId: "PC-HWID-98234",
+});
+
+// 4. Superuser: Batch generate license serial keys
+const batch = await ab.apps.manageCreateLicenses({
+  appSlug: "desktop-app",
+  count: 20,
+  format: "XXXX-XXXX-XXXX-XXXX",
+  maxActivations: 3,
+  expiresAt: "2027-12-31T23:59:59.000Z",
+  customerName: "Enterprise Client",
+});
+console.log(`Generated ${batch.createdCount} licenses`);
+
+// 5. Superuser: Pre-ban or lock a computer ID
+await ab.apps.manageLockDevice({
+  appSlug: "desktop-app",
+  deviceId: "PC-HWID-MALICIOUS",
+  reason: "Compromised machine / Piracy detected",
+});
+```
+
 ---
 
 ## 🛡️ Error Handling
