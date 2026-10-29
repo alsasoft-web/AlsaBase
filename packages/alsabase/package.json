@@ -1,6 +1,6 @@
 {
   "name": "alsabase",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Official JavaScript/TypeScript SDK for AlsaBase - lightweight, realtime, batteries-included backend with SQLite",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

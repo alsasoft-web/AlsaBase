@@ -5,7 +5,6 @@ import path from "node:path";
 import { db } from "./db";
 import { requireSuperuser, AuthPayload } from "./auth";
 import { FILES_DIR, MIME_TYPES } from "./files";
-import { broadcastCustomEvent } from "./events";
 
 export const appsRouter = Router();
 
@@ -74,74 +73,8 @@ export interface AppRecord {
   slug: string;
   description?: string | null;
   icon_url?: string | null;
-  webhook_url?: string | null;
-  webhook_secret?: string | null;
   created_at: string;
   updated_at: string;
-}
-
-/**
- * Dispatches an outgoing HTTP webhook notification to the app's configured webhook URL.
- */
-export async function dispatchAppWebhook(
-  app: AppRecord,
-  event: string,
-  release: any
-): Promise<{ success: boolean; statusCode?: number; error?: string }> {
-  if (!app.webhook_url || !app.webhook_url.trim()) {
-    return { success: false, error: "No webhook URL configured for this app" };
-  }
-
-  const payload = {
-    event,
-    app: {
-      id: app.id,
-      name: app.name,
-      slug: app.slug,
-    },
-    release,
-    timestamp: new Date().toISOString(),
-  };
-
-  const payloadJson = JSON.stringify(payload);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "User-Agent": "AlsaBase-Release-Webhook/1.0",
-    "X-AlsaBase-Event": event,
-    "X-AlsaBase-App": app.slug,
-  };
-
-  if (app.webhook_secret && app.webhook_secret.trim()) {
-    const signature = crypto
-      .createHmac("sha256", app.webhook_secret.trim())
-      .update(payloadJson)
-      .digest("hex");
-    headers["X-AlsaBase-Signature"] = `sha256=${signature}`;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-
-    const resp = await fetch(app.webhook_url.trim(), {
-      method: "POST",
-      headers,
-      body: payloadJson,
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-
-    return {
-      success: resp.ok,
-      statusCode: resp.status,
-      error: resp.ok ? undefined : `HTTP ${resp.status} ${resp.statusText}`,
-    };
-  } catch (err: any) {
-    return {
-      success: false,
-      error: err.name === "AbortError" ? "Webhook request timed out after 10s" : err.message,
-    };
-  }
 }
 
 export interface AppReleaseRecord {
@@ -286,8 +219,6 @@ appsRouter.get("/manage/apps", requireSuperuser, (_req: Request, res: Response) 
         slug: app.slug,
         description: app.description || "",
         iconUrl: app.icon_url || null,
-        webhookUrl: app.webhook_url || null,
-        webhookSecret: app.webhook_secret || null,
         totalReleases: stats?.total_releases || 0,
         totalDownloads: stats?.total_downloads || 0,
         totalStorageBytes: stats?.total_storage_bytes || 0,
@@ -312,7 +243,7 @@ appsRouter.get("/manage/apps", requireSuperuser, (_req: Request, res: Response) 
  */
 appsRouter.post("/manage/apps", requireSuperuser, (req: Request, res: Response) => {
   try {
-    const { name, slug, description, iconUrl, iconFile, webhookUrl, webhookSecret } = req.body;
+    const { name, slug, description, iconUrl, iconFile } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({ error: "App name is required" });
@@ -348,19 +279,9 @@ appsRouter.post("/manage/apps", requireSuperuser, (req: Request, res: Response) 
     const now = new Date().toISOString();
 
     db.prepare(
-      `INSERT INTO _apps (id, name, slug, description, icon_url, webhook_url, webhook_secret, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id,
-      name.trim(),
-      cleanSlug,
-      description?.trim() || "",
-      finalIconUrl,
-      webhookUrl?.trim() || null,
-      webhookSecret?.trim() || null,
-      now,
-      now
-    );
+      `INSERT INTO _apps (id, name, slug, description, icon_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, name.trim(), cleanSlug, description?.trim() || "", finalIconUrl, now, now);
 
     const app = db.prepare("SELECT * FROM _apps WHERE id = ?").get(id);
     res.status(201).json(app);
@@ -376,7 +297,7 @@ appsRouter.post("/manage/apps", requireSuperuser, (req: Request, res: Response) 
 appsRouter.put("/manage/apps/:id", requireSuperuser, (req: Request, res: Response) => {
   try {
     const id = getParam(req.params.id);
-    const { name, slug, description, iconUrl, iconFile, webhookUrl, webhookSecret } = req.body;
+    const { name, slug, description, iconUrl, iconFile } = req.body;
 
     const current = db.prepare("SELECT * FROM _apps WHERE id = ?").get(id) as unknown as AppRecord | undefined;
     if (!current) {
@@ -421,69 +342,16 @@ appsRouter.put("/manage/apps/:id", requireSuperuser, (req: Request, res: Respons
 
     const finalName = name?.trim() || current.name;
     const finalDesc = description !== undefined ? description?.trim() || "" : current.description;
-    const finalWebhookUrl = webhookUrl !== undefined ? webhookUrl?.trim() || null : current.webhook_url;
-    const finalWebhookSecret = webhookSecret !== undefined ? webhookSecret?.trim() || null : current.webhook_secret;
     const now = new Date().toISOString();
 
     db.prepare(
       `UPDATE _apps 
-       SET name = ?, slug = ?, description = ?, icon_url = ?, webhook_url = ?, webhook_secret = ?, updated_at = ?
+       SET name = ?, slug = ?, description = ?, icon_url = ?, updated_at = ?
        WHERE id = ?`
-    ).run(finalName, finalSlug, finalDesc, finalIcon, finalWebhookUrl, finalWebhookSecret, now, id);
+    ).run(finalName, finalSlug, finalDesc, finalIcon, now, id);
 
     const updated = db.prepare("SELECT * FROM _apps WHERE id = ?").get(id);
     res.json(updated);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * POST /api/apps/manage/apps/:id/test-webhook
- * Trigger a test webhook dispatch to verify receiver endpoint
- */
-appsRouter.post("/manage/apps/:id/test-webhook", requireSuperuser, async (req: Request, res: Response) => {
-  try {
-    const id = getParam(req.params.id);
-    const app = db
-      .prepare("SELECT * FROM _apps WHERE id = ? OR slug = ?")
-      .get(id, id) as unknown as AppRecord | undefined;
-
-    if (!app) {
-      return res.status(404).json({ error: "App not found" });
-    }
-
-    if (!app.webhook_url || !app.webhook_url.trim()) {
-      return res.status(400).json({ error: "No webhook URL configured for this app. Please configure a Webhook URL first." });
-    }
-
-    const testRelease = {
-      id: "rel_sample_test",
-      version: "1.0.0-test",
-      buildNumber: 1,
-      importance: "optional",
-      channel: "stable",
-      platform: "all",
-      fileName: `${app.slug}-1.0.0-test.zip`,
-      fileSize: 1048576,
-      releaseNotes: "This is a test release webhook event emitted by AlsaBase to verify the webhook receiver endpoint.",
-      createdAt: new Date().toISOString(),
-    };
-
-    const result = await dispatchAppWebhook(app, "app.release.test", testRelease);
-    if (result.success) {
-      res.json({
-        success: true,
-        statusCode: result.statusCode,
-        message: `Webhook sent and acknowledged successfully (HTTP ${result.statusCode})`,
-      });
-    } else {
-      res.status(400).json({
-        success: false,
-        statusCode: result.statusCode,
-        error: result.error || "Failed to deliver webhook",
-      });
-    }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -701,34 +569,7 @@ appsRouter.post("/manage/versions", requireSuperuser, (req: Request, res: Respon
     );
 
     const created = db.prepare("SELECT * FROM _app_releases WHERE id = ?").get(releaseId) as unknown as AppReleaseRecord;
-    const formatted = formatReleaseResponse(req, created, app.slug);
-
-    // 1. Broadcast real-time release event to all connected SDK/client subscribers (WebSocket & SSE)
-    const eventPayload = {
-      event: "app.release.created",
-      app: {
-        id: app.id,
-        name: app.name,
-        slug: app.slug,
-      },
-      release: formatted,
-      timestamp: now,
-    };
-    try {
-      broadcastCustomEvent(`apps/${app.slug}`, eventPayload, "new_release");
-      broadcastCustomEvent("apps", eventPayload, "new_release");
-    } catch (e: any) {
-      console.warn("[Apps] Error broadcasting realtime release event:", e.message);
-    }
-
-    // 2. Dispatch outgoing webhook to configured URL if present
-    if (app.webhook_url) {
-      dispatchAppWebhook(app, "app.release.created", formatted).catch((webhookErr) => {
-        console.warn(`[Apps Webhook] Failed to deliver webhook for ${app.slug}:`, webhookErr.message);
-      });
-    }
-
-    res.status(201).json(formatted);
+    res.status(201).json(formatReleaseResponse(req, created, app.slug));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1258,8 +1099,7 @@ appsRouter.get("/:slug", (req: Request, res: Response) => {
       return res.status(404).json({ error: `App "${slug}" not found` });
     }
 
-    const { webhook_secret, ...safeApp } = app as any;
-    res.json(safeApp);
+    res.json(app);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

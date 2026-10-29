@@ -44,9 +44,6 @@ import {
   IconTerminal2,
   IconPhoto,
   IconArrowLeft,
-  IconWebhook,
-  IconSend,
-  IconBroadcast,
 } from "@tabler/icons-react";
 import {
   api,
@@ -83,10 +80,7 @@ export const AppsView: React.FC = () => {
   const [appIconFile, setAppIconFile] = useState<File | null>(null);
   const [appIconBase64, setAppIconBase64] = useState<string>("");
   const [appIconMode, setAppIconMode] = useState<"upload" | "url">("upload");
-  const [appWebhookUrl, setAppWebhookUrl] = useState("");
-  const [appWebhookSecret, setAppWebhookSecret] = useState("");
   const [savingApp, setSavingApp] = useState(false);
-  const [testingWebhook, setTestingWebhook] = useState(false);
 
   // Upload/Edit Version Modal
   const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
@@ -200,8 +194,6 @@ export const AppsView: React.FC = () => {
       setAppIconFile(null);
       setAppIconBase64("");
       setAppIconMode(appToEdit.iconUrl?.startsWith("http") ? "url" : "upload");
-      setAppWebhookUrl(appToEdit.webhookUrl || "");
-      setAppWebhookSecret(appToEdit.webhookSecret || "");
     } else {
       setEditingApp(null);
       setAppName("");
@@ -211,8 +203,6 @@ export const AppsView: React.FC = () => {
       setAppIconFile(null);
       setAppIconBase64("");
       setAppIconMode("upload");
-      setAppWebhookUrl("");
-      setAppWebhookSecret("");
     }
     setIsAppModalOpen(true);
   };
@@ -268,8 +258,6 @@ export const AppsView: React.FC = () => {
           description: appDescription.trim(),
           iconUrl: resolvedIconUrl,
           iconFile: iconPayload,
-          webhookUrl: appWebhookUrl.trim() || undefined,
-          webhookSecret: appWebhookSecret.trim() || undefined,
         });
         notifications.show({
           title: "App updated",
@@ -286,8 +274,6 @@ export const AppsView: React.FC = () => {
           description: appDescription.trim(),
           iconUrl: resolvedIconUrl,
           iconFile: iconPayload,
-          webhookUrl: appWebhookUrl.trim() || undefined,
-          webhookSecret: appWebhookSecret.trim() || undefined,
         });
         notifications.show({
           title: "App created",
@@ -306,36 +292,6 @@ export const AppsView: React.FC = () => {
       });
     } finally {
       setSavingApp(false);
-    }
-  };
-
-  // Test App Outgoing Webhook
-  const handleTestWebhook = async () => {
-    if (!selectedApp) return;
-    if (!selectedApp.webhookUrl) {
-      notifications.show({
-        title: "No Webhook Configured",
-        message: "Please configure a Webhook URL in app settings first.",
-        color: "orange",
-      });
-      return;
-    }
-    setTestingWebhook(true);
-    try {
-      const res = await api.testAppWebhook(selectedApp.id);
-      notifications.show({
-        title: "Webhook Delivered",
-        message: res.message || `Test event successfully sent to ${selectedApp.webhookUrl}`,
-        color: "teal",
-      });
-    } catch (err: any) {
-      notifications.show({
-        title: "Webhook Delivery Failed",
-        message: err.message,
-        color: "red",
-      });
-    } finally {
-      setTestingWebhook(false);
     }
   };
 
@@ -909,19 +865,6 @@ export const AppsView: React.FC = () => {
                       >
                         slug: {selectedApp.slug}
                       </Badge>
-                      {selectedApp.webhookUrl && (
-                        <Tooltip label={`Outgoing Webhook: ${selectedApp.webhookUrl}`} withArrow>
-                          <Badge
-                            size="xs"
-                            variant="filled"
-                            color="cyan"
-                            leftSection={<IconWebhook size={11} color="#ffffff" />}
-                            style={{ color: "#ffffff" }}
-                          >
-                            Webhook Active
-                          </Badge>
-                        </Tooltip>
-                      )}
                     </Group>
                     {selectedApp.description && (
                       <Text size="xs" c="dimmed" mt={2} lineClamp={1}>
@@ -954,21 +897,6 @@ export const AppsView: React.FC = () => {
                   >
                     Test Update Check
                   </Button>
-
-                  {selectedApp.webhookUrl && (
-                    <Button
-                      size={isMobile ? "xs" : "sm"}
-                      variant="filled"
-                      color="cyan"
-                      loading={testingWebhook}
-                      leftSection={<IconSend size={isMobile ? 14 : 16} color="#ffffff" />}
-                      onClick={handleTestWebhook}
-                      style={{ color: "#ffffff", flex: isMobile ? "1 1 auto" : "initial" }}
-                      styles={{ label: { color: "#ffffff" }, section: { color: "#ffffff" } }}
-                    >
-                      Test Webhook
-                    </Button>
-                  )}
 
                   <Button
                     size={isMobile ? "xs" : "sm"}
@@ -1559,24 +1487,6 @@ export const AppsView: React.FC = () => {
             )}
           </Box>
 
-          <Divider label="Outgoing Webhooks & Realtime Detection" labelPosition="center" my="xs" />
-
-          <TextInput
-            label="Webhook URL (Optional)"
-            placeholder="https://api.example.com/webhooks/releases"
-            description="External URL that receives HTTP POST requests when a new version is released"
-            value={appWebhookUrl}
-            onChange={(e) => setAppWebhookUrl(e.target.value)}
-          />
-
-          <TextInput
-            label="Webhook Secret Key (Optional)"
-            placeholder="e.g. whsec_sample_secret_key"
-            description="Used to sign outgoing payloads with HMAC-SHA256 in the X-AlsaBase-Signature header"
-            value={appWebhookSecret}
-            onChange={(e) => setAppWebhookSecret(e.target.value)}
-          />
-
           <Group justify="flex-end" mt="md">
             <Button variant="default" onClick={() => setIsAppModalOpen(false)}>
               Cancel
@@ -1792,9 +1702,6 @@ export const AppsView: React.FC = () => {
             </Tabs.Tab>
             <Tabs.Tab value="api" leftSection={<IconTerminal2 size={15} />}>
               REST API Endpoints
-            </Tabs.Tab>
-            <Tabs.Tab value="realtime" leftSection={<IconBroadcast size={15} />}>
-              Realtime & Webhooks
             </Tabs.Tab>
           </Tabs.List>
 
@@ -2051,95 +1958,6 @@ const versions = await client.apps.getVersions("${selectedApp?.slug}");`}
                   Upload and publish new app version with binary payload in base64.
                 </Text>
               </Paper>
-            </Stack>
-          </Tabs.Panel>
-
-          {/* Realtime & Webhooks Tab */}
-          <Tabs.Panel value="realtime">
-            <Stack gap="md">
-              <Box>
-                <Group gap="xs" mb={4}>
-                  <IconBroadcast size={18} color="var(--color-neon-primary, #10e57a)" />
-                  <Text size="sm" fw={700}>
-                    Realtime Release Auto-Detection in Client SDK
-                  </Text>
-                </Group>
-                <Text size="xs" c="dimmed">
-                  Clients, desktop apps, or mobile apps can auto-detect newly published releases in real time using WebSocket / SSE without polling:
-                </Text>
-              </Box>
-
-              <Code block style={{ fontSize: "12px", padding: 14 }}>
-{`import AlsaBase from "alsabase";
-
-const client = new AlsaBase("${window.location.origin}");
-
-// Auto-detect new releases in real time
-const unsubscribe = await client.onAppRelease("${selectedApp?.slug}", (event) => {
-  console.log("New version published automatically!", event.release.version);
-  console.log("Importance:", event.release.importance); // 'automatic' | 'optional'
-  console.log("Download URL:", event.release.downloadUrl);
-
-  if (event.release.isAutomatic) {
-    // Download and update silently in the background
-    triggerBackgroundInstaller(event.release.downloadUrl);
-  } else {
-    // Prompt the user to update
-    showUpdateBanner({
-      version: event.release.version,
-      notes: event.release.releaseNotes,
-      downloadUrl: event.release.downloadUrl,
-    });
-  }
-});
-
-// To stop listening:
-// unsubscribe();`}
-              </Code>
-
-              <Divider my="xs" />
-
-              <Box>
-                <Group gap="xs" mb={4}>
-                  <IconWebhook size={18} color="var(--color-neon-primary, #10e57a)" />
-                  <Text size="sm" fw={700}>
-                    Outgoing Webhook Receiver & Signature Verification
-                  </Text>
-                </Group>
-                <Text size="xs" c="dimmed">
-                  When a new version is published, AlsaBase sends an HTTP POST request to your configured Webhook URL. If a secret key is set, verify the <Code>X-AlsaBase-Signature</Code> header:
-                </Text>
-              </Box>
-
-              <Code block style={{ fontSize: "12px", padding: 14 }}>
-{`// Express.js / Node.js Webhook Receiver
-import express from "express";
-import crypto from "crypto";
-
-const app = express();
-const WEBHOOK_SECRET = "${selectedApp?.webhookSecret || "YOUR_WEBHOOK_SECRET"}";
-
-app.post("/api/webhooks/releases", express.json(), (req, res) => {
-  const signature = req.headers["x-alsabase-signature"];
-  
-  if (WEBHOOK_SECRET && signature) {
-    const expected = "sha256=" + crypto
-      .createHmac("sha256", WEBHOOK_SECRET)
-      .update(JSON.stringify(req.body))
-      .digest("hex");
-
-    if (signature !== expected) {
-      return res.status(401).send("Invalid webhook signature");
-    }
-  }
-
-  const { event, app, release } = req.body;
-  console.log(\`Received \${event} for \${app.name}: version \${release.version}\`);
-
-  // E.g. notify Discord, Slack, trigger deployment, or invalidate CDN cache
-  res.status(200).json({ received: true });
-});`}
-              </Code>
             </Stack>
           </Tabs.Panel>
         </Tabs>

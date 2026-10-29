@@ -590,33 +590,6 @@ if (update.hasUpdate) {
 }
 ```
 
-### Realtime Auto-Detection of New Releases
-
-Listen for newly published releases in real time over WebSocket/SSE without polling:
-
-```typescript
-// Auto-detect updates for a specific application in real time
-const unsubscribe = await ab.onAppRelease("desktop-app", (event) => {
-  console.log("New version published:", event.release.version);
-  console.log("Importance:", event.release.importance); // "automatic" | "optional"
-  console.log("Download link:", event.release.downloadUrl);
-
-  if (event.release.isAutomatic) {
-    // Download and apply silently in background
-    triggerBackgroundUpdater(event.release.downloadUrl);
-  } else {
-    // Prompt the user to update
-    promptUserToUpdate(event.release);
-  }
-});
-
-// To stop listening:
-unsubscribe();
-
-// Alternatively, listen using apps service:
-// await ab.apps.onNewRelease("desktop-app", (event) => { ... });
-```
-
 ### Accessing App Versions & Binaries
 
 ```typescript
@@ -635,17 +608,12 @@ const downloadUrl = ab.apps.getDownloadUrl("desktop-app", "1.2.0");
 ### Superuser Operations (Publishing & Managing Releases)
 
 ```typescript
-// 1. Create a new application with optional outgoing webhook URL
+// 1. Create a new application
 const app = await ab.apps.createApp({
   name: "AlsaBase Desktop Client",
   slug: "desktop-app",
   description: "Official desktop client for macOS and Windows",
-  webhookUrl: "https://api.example.com/webhooks/releases",
-  webhookSecret: "whsec_sample_secret_key",
 });
-
-// 2. Test outgoing webhook delivery
-await ab.apps.testWebhook("desktop-app");
 
 // 2. Upload and publish a new version release
 const release = await ab.apps.uploadVersion({

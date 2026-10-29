@@ -16,8 +16,6 @@ import type {
   CommonOptions,
   AppUpdateCheckOptions,
   AppUpdateCheckResult,
-  AppReleaseEvent,
-  UnsubscribeFunc,
 } from "./types";
 
 export class AlsaBase {
@@ -73,19 +71,6 @@ export class AlsaBase {
     options: AppUpdateCheckOptions
   ): Promise<AppUpdateCheckResult> {
     return this.apps.checkUpdate(appSlug, options);
-  }
-
-  /**
-   * Listen for real-time app release events and new updates.
-   *
-   * @param appSlug App slug (or "*" for any application)
-   * @param callback Callback called whenever a new release is published
-   */
-  async onAppRelease(
-    appSlug: string,
-    callback: (event: AppReleaseEvent) => void
-  ): Promise<UnsubscribeFunc> {
-    return this.apps.onNewRelease(appSlug, callback);
   }
 
   /**

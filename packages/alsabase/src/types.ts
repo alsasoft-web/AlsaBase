@@ -354,27 +354,12 @@ export interface AppModel {
   slug: string;
   description?: string;
   iconUrl?: string | null;
-  webhookUrl?: string | null;
-  webhookSecret?: string | null;
   totalReleases?: number;
   totalDownloads?: number;
   latestVersion?: string | null;
-  latestImportance?: string | null;
-  latestChannel?: string | null;
   latestReleaseAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
-}
-
-export interface AppReleaseEvent {
-  event: "app.release.created" | "app.release.test" | "new_release";
-  app: {
-    id: string;
-    name: string;
-    slug: string;
-  };
-  release: AppVersionModel;
-  timestamp: string;
 }
 
 export interface AppVersionModel {

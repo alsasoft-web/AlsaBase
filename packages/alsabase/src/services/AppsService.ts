@@ -5,8 +5,6 @@ import type {
   AppUpdateCheckOptions,
   AppUpdateCheckResult,
   AppVersionUploadOptions,
-  AppReleaseEvent,
-  UnsubscribeFunc,
   CommonOptions,
 } from "../types";
 
@@ -139,8 +137,6 @@ export class AppsService extends BaseService {
       description?: string;
       iconUrl?: string;
       iconFile?: { name: string; data: string; size?: number; type?: string } | string;
-      webhookUrl?: string;
-      webhookSecret?: string;
     },
     options?: CommonOptions
   ): Promise<AppModel> {
@@ -163,8 +159,6 @@ export class AppsService extends BaseService {
       description?: string;
       iconUrl?: string;
       iconFile?: { name: string; data: string; size?: number; type?: string } | string;
-      webhookUrl?: string;
-      webhookSecret?: string;
     },
     options?: CommonOptions
   ): Promise<AppModel> {
@@ -173,45 +167,6 @@ export class AppsService extends BaseService {
       body: data,
       headers: options?.headers,
       requestKey: options?.requestKey,
-    });
-  }
-
-  /**
-   * Trigger a test webhook dispatch for an app (Requires Superuser).
-   */
-  async testWebhook(
-    idOrSlug: string,
-    options?: CommonOptions
-  ): Promise<{ success: boolean; statusCode?: number; message?: string }> {
-    return this.send<{ success: boolean; statusCode?: number; message?: string }>(
-      `/api/apps/manage/apps/${encodeURIComponent(idOrSlug)}/test-webhook`,
-      {
-        method: "POST",
-        headers: options?.headers,
-        requestKey: options?.requestKey,
-      }
-    );
-  }
-
-  /**
-   * Subscribe to real-time new release events for an app (or all apps using "*").
-   * Automatically triggers when a new version/update is published on AlsaBase.
-   *
-   * @param appSlug Unique slug of the app or "*" for all apps
-   * @param callback Callback receiving the release event with version info & download URL
-   */
-  async onNewRelease(
-    appSlug: string,
-    callback: (event: AppReleaseEvent) => void
-  ): Promise<UnsubscribeFunc> {
-    const clean = (appSlug || "*").trim();
-    const topic = clean === "*" ? "apps" : `apps/${clean}`;
-
-    return this.client.realtime.subscribe(topic, (e: any) => {
-      const payload = (e && (e.release ? e : e.data || e.record)) as AppReleaseEvent;
-      if (payload && payload.release) {
-        callback(payload);
-      }
     });
   }
 

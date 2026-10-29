@@ -205,20 +205,7 @@ if (update.hasUpdate) {
 
   console.log("Download URL:", update.downloadUrl);
 }
-
-// Auto-detect new releases in real time using WebSocket / SSE
-const unsubscribe = await client.onAppRelease("desktop-app", (event) => {
-  console.log("New version auto-detected:", event.release.version);
-  console.log("Importance:", event.release.importance);
-  console.log("Download URL:", event.release.downloadUrl);
-});
 ```
-
-### Outgoing Webhooks
-
-Applications can configure an outgoing Webhook URL and Secret Key. Whenever a release is published:
-- An HTTP POST request is sent to the configured endpoint with an `app.release.created` payload.
-- If configured, an HMAC-SHA256 signature is included in the `X-AlsaBase-Signature` header for cryptographic payload verification.
 
 ---
 

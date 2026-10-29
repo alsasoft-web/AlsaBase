@@ -609,35 +609,12 @@ Registers a new application.
     "name": "Desktop Client",
     "slug": "desktop-client",
     "description": "Cross-platform desktop application",
-    "iconUrl": "https://example.com/icon.png",
-    "webhookUrl": "https://api.example.com/webhooks/releases",
-    "webhookSecret": "whsec_sample_secret_key"
+    "iconUrl": "https://example.com/icon.png"
   }
   ```
 
 #### `PUT /api/apps/manage/apps/:id`
-Updates application metadata, icon, or webhook configuration.
-- **Body**:
-  ```json
-  {
-    "name": "Desktop Client",
-    "slug": "desktop-client",
-    "description": "Updated description",
-    "webhookUrl": "https://api.example.com/webhooks/releases",
-    "webhookSecret": "whsec_updated_secret"
-  }
-  ```
-
-#### `POST /api/apps/manage/apps/:id/test-webhook`
-Triggers a test webhook dispatch to verify receiver endpoint connectivity and HMAC signature validation.
-- **Response**: `200 OK`
-  ```json
-  {
-    "success": true,
-    "statusCode": 200,
-    "message": "Webhook sent and acknowledged successfully (HTTP 200)"
-  }
-  ```
+Updates application metadata.
 
 #### `DELETE /api/apps/manage/apps/:id`
 Deletes an application, all its releases, and all physical binary files from disk.
@@ -673,58 +650,6 @@ Updates release metadata (importance, channel, active status, release notes).
 
 #### `DELETE /api/apps/manage/versions/:id`
 Deletes a release record and removes its physical binary file from storage.
-
----
-
-### Outgoing Release Webhooks
-
-When an application has a configured `webhook_url`, publishing a new version or triggering a test webhook sends an HTTP POST request:
-
-- **Headers**:
-  - `Content-Type: application/json`
-  - `User-Agent: AlsaBase-App-Webhook/1.0`
-  - `X-AlsaBase-Event: app.release.created` (or `app.release.test`)
-  - `X-AlsaBase-App: <app-slug>`
-  - `X-AlsaBase-Signature: sha256=<hex_hash>` (if `webhook_secret` is configured, computed as `crypto.createHmac("sha256", secret).update(JSON.stringify(payload)).digest("hex")`)
-
-- **Payload Structure**:
-  ```json
-  {
-    "event": "app.release.created",
-    "app": {
-      "id": "app_123456",
-      "name": "Desktop Client",
-      "slug": "desktop-client"
-    },
-    "release": {
-      "id": "rel_abc123",
-      "version": "1.2.0",
-      "buildNumber": 120,
-      "importance": "automatic",
-      "channel": "stable",
-      "platform": "windows",
-      "fileName": "Setup-1.2.0.exe",
-      "fileSize": 25481920,
-      "downloadUrl": "/api/apps/desktop-client/versions/1.2.0/download",
-      "fullDownloadUrl": "http://127.0.0.1:8090/api/apps/desktop-client/versions/1.2.0/download",
-      "releaseNotes": "Bug fixes and improvements",
-      "createdAt": "2026-10-29T00:00:00.000Z"
-    },
-    "timestamp": "2026-10-29T00:00:00.000Z"
-  }
-  ```
-
----
-
-### Realtime Release Auto-Detection
-
-Whenever a new version is published, AlsaBase broadcasts an event across its realtime event bus (WebSocket, SSE, and Socket.IO):
-
-- **Topics**:
-  - `apps/<app-slug>`: scoped to a specific app.
-  - `apps`: global topic for all applications.
-- **Event Name**: `new_release`
-- **Data Payload**: Same structure as the webhook payload above.
 
 ---
 

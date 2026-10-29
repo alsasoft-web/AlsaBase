@@ -222,8 +222,6 @@ export interface AppItem {
   slug: string;
   description?: string;
   iconUrl?: string | null;
-  webhookUrl?: string | null;
-  webhookSecret?: string | null;
   totalReleases: number;
   totalDownloads: number;
   totalStorageBytes?: number;
@@ -1051,8 +1049,6 @@ export const api = {
     description?: string;
     iconUrl?: string;
     iconFile?: { name: string; data: string; size?: number; type?: string } | string;
-    webhookUrl?: string;
-    webhookSecret?: string;
   }) {
     return request<AppItem>("/apps/manage/apps", {
       method: "POST",
@@ -1068,23 +1064,12 @@ export const api = {
       description?: string;
       iconUrl?: string;
       iconFile?: { name: string; data: string; size?: number; type?: string } | string;
-      webhookUrl?: string;
-      webhookSecret?: string;
     },
   ) {
     return request<AppItem>(`/apps/manage/apps/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
-  },
-
-  async testAppWebhook(id: string) {
-    return request<{ success: boolean; statusCode?: number; message?: string }>(
-      `/apps/manage/apps/${id}/test-webhook`,
-      {
-        method: "POST",
-      },
-    );
   },
 
   async deleteApp(id: string) {

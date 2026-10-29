@@ -111,8 +111,6 @@ export function initSystemTables() {
       slug TEXT UNIQUE NOT NULL,
       description TEXT,
       icon_url TEXT,
-      webhook_url TEXT,
-      webhook_secret TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -157,13 +155,6 @@ export function initSystemTables() {
     CREATE INDEX IF NOT EXISTS idx_app_releases_version ON _app_releases(version);
     CREATE INDEX IF NOT EXISTS idx_app_releases_channel ON _app_releases(channel);
   `);
-
-  try {
-    db.prepare("ALTER TABLE _apps ADD COLUMN webhook_url TEXT").run();
-  } catch {}
-  try {
-    db.prepare("ALTER TABLE _apps ADD COLUMN webhook_secret TEXT").run();
-  } catch {}
 }
 
 // Ensure system tables are ready on load
