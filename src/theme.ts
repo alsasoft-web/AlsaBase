@@ -27,6 +27,7 @@ export const brandDark: MantineColorsTuple = [
 ];
 
 export const theme = createTheme({
+  autoContrast: true,
   primaryColor: "neonGreen",
   primaryShade: 5,
   colors: {

@@ -1,7 +1,7 @@
 {
   "name": "AlsaBase",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.6",
   "type": "module",
   "scripts": {
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"blue,magenta\" \"npm run server:dev\" \"npm run client:dev\"",
@@ -17,7 +17,11 @@
     "typecheck:sdk": "tsc --project packages/alsabase/tsconfig.json --noEmit",
     "typecheck:all": "tsc --noEmit && tsc --project tsconfig.server.json --noEmit && tsc --project packages/alsabase/tsconfig.json --noEmit",
     "build:sdk": "npm --prefix packages/alsabase run build",
-    "publish:sdk": "node scripts/bump-and-publish-sdk.mjs"
+    "publish:sdk": "node scripts/bump-and-publish-sdk.mjs",
+    "release": "node scripts/release.mjs",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major"
   },
   "dependencies": {
     "@mantine/core": "9.6.1",

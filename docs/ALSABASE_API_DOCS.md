@@ -655,9 +655,37 @@ Validates an existing serial key or checks if a device holds an active valid act
     "key": "ABCD-EFGH-IJKL-MNOP"
   }
   ```
+- **Response**: `200 OK`
+  ```json
+  {
+    "valid": true,
+    "isLocked": false,
+    "license": {
+      "id": "lic_123",
+      "serialKey": "ABCD-EFGH-IJKL-MNOP",
+      "status": "active",
+      "maxActivations": 3,
+      "activatedCount": 1,
+      "expiresAt": "2027-12-31T23:59:59.000Z",
+      "customerName": "Acme Corp"
+    },
+    "device": {
+      "deviceId": "PC-HWID-98234",
+      "deviceName": "Workstation-1",
+      "isLocked": false
+    }
+  }
+  ```
+- **Device-Only Validation**:
+  If `key` is omitted, validates the computer device against the application device policy (`unrestricted`, `max_devices`, `whitelist_only`):
+  ```json
+  {
+    "deviceId": "PC-HWID-98234"
+  }
+  ```
 
 #### `POST /api/apps/:slug/licenses/deactivate`
-Deactivates a serial key from a device, freeing up an activation slot.
+Deactivates a serial key from a device, freeing up an activation slot so the license can be activated on another computer.
 
 - **Body**:
   ```json
@@ -666,6 +694,430 @@ Deactivates a serial key from a device, freeing up an activation slot.
     "deviceId": "PC-HWID-98234"
   }
   ```
+- **Response**: `200 OK`
+  ```json
+  {
+    "success": true,
+    "message": "License deactivated successfully for this device",
+    "license": {
+      "id": "lic_123",
+      "serialKey": "ABCD-EFGH-IJKL-MNOP",
+      "status": "active",
+      "activatedCount": 0
+    }
+  }
+  ```
+
+---
+
+### Client Application Integration by Programming Language
+
+The AlsaBase Apps API is completely language-agnostic and accessible via standard HTTP REST endpoints. Below are production-ready client integration examples across multiple programming languages.
+
+#### Recommended Application Startup Lifecycle
+
+Every client application (Desktop, Mobile, or CLI) should follow this sequence on launch:
+
+1. **Resolve Machine Identifier (HWID)**: Extract a stable, unique hardware fingerprint (e.g. Windows MachineGuid, macOS IOPlatformUUID, Linux machine-id).
+2. **Gatekeeper Check (`GET /api/apps/:slug/devices/check`)**: Verify device is not locked or banned by an administrator.
+3. **Update Check (`GET /api/apps/:slug/check-update`)**: Check for new releases. If mandatory (`isAutomatic: true`), prompt or force update before starting.
+4. **License Validation (`POST /api/apps/:slug/licenses/validate`)**: If a stored serial key exists locally, validate it against AlsaBase. If no key exists or validation fails, prompt for serial key entry and call `POST /api/apps/:slug/licenses/activate`.
+
+---
+
+#### 1. C# (.NET 8+ / WPF / WinForms / MAUI)
+
+```csharp
+using System;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using Microsoft.Win32;
+
+namespace AlsaBaseClient
+{
+    public class LicenseActivationResult
+    {
+        [JsonPropertyName("success")]
+        public bool Success { get; set; }
+
+        [JsonPropertyName("activated")]
+        public bool Activated { get; set; }
+
+        [JsonPropertyName("message")]
+        public string Message { get; set; }
+
+        [JsonPropertyName("error")]
+        public string Error { get; set; }
+    }
+
+    public class UpdateCheckResult
+    {
+        [JsonPropertyName("updateAvailable")]
+        public bool UpdateAvailable { get; set; }
+
+        [JsonPropertyName("latestVersion")]
+        public string LatestVersion { get; set; }
+
+        [JsonPropertyName("isAutomatic")]
+        public bool IsAutomatic { get; set; }
+
+        [JsonPropertyName("downloadUrl")]
+        public string DownloadUrl { get; set; }
+
+        [JsonPropertyName("releaseNotes")]
+        public string ReleaseNotes { get; set; }
+    }
+
+    public class AlsaBaseAppClient
+    {
+        private readonly HttpClient _http;
+        private readonly string _baseUrl;
+        private readonly string _appSlug;
+
+        public AlsaBaseAppClient(string baseUrl, string appSlug)
+        {
+            _baseUrl = baseUrl.TrimEnd('/');
+            _appSlug = appSlug;
+            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        }
+
+        // 1. Get Hardware ID (HWID) on Windows via MachineGuid
+        public static string GetWindowsHardwareId()
+        {
+            try
+            {
+                using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64)
+                                           .OpenSubKey(@"SOFTWARE\Microsoft\Cryptography");
+                var guid = key?.GetValue("MachineGuid")?.ToString();
+                if (!string.IsNullOrEmpty(guid)) return guid;
+            }
+            catch {}
+            return Environment.MachineName;
+        }
+
+        // 2. Check if this device is locked / authorized
+        public async Task<bool> CheckDeviceAllowedAsync(string deviceId)
+        {
+            var url = $"{_baseUrl}/api/apps/{_appSlug}/devices/check?deviceId={Uri.EscapeDataString(deviceId)}";
+            var response = await _http.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return false;
+
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            var root = doc.RootElement;
+            return root.TryGetProperty("allowed", out var prop) && prop.GetBoolean();
+        }
+
+        // 3. Check for application update
+        public async Task<UpdateCheckResult> CheckUpdateAsync(string currentVersion, string deviceId)
+        {
+            var url = $"{_baseUrl}/api/apps/{_appSlug}/check-update?currentVersion={currentVersion}&platform=windows&deviceId={Uri.EscapeDataString(deviceId)}";
+            return await _http.GetFromJsonAsync<UpdateCheckResult>(url);
+        }
+
+        // 4. Activate a serial key on this device
+        public async Task<LicenseActivationResult> ActivateLicenseAsync(string serialKey, string deviceId)
+        {
+            var payload = new
+            {
+                key = serialKey,
+                deviceId = deviceId,
+                deviceName = Environment.MachineName,
+                osName = Environment.OSVersion.ToString(),
+                platform = "windows"
+            };
+
+            var url = $"{_baseUrl}/api/apps/{_appSlug}/licenses/activate";
+            var response = await _http.PostAsJsonAsync(url, payload);
+            return await response.Content.ReadFromJsonAsync<LicenseActivationResult>();
+        }
+
+        // 5. Validate existing serial key on startup
+        public async Task<bool> ValidateLicenseAsync(string serialKey, string deviceId)
+        {
+            var payload = new { key = serialKey, deviceId = deviceId };
+            var url = $"{_baseUrl}/api/apps/{_appSlug}/licenses/validate";
+            var response = await _http.PostAsJsonAsync(url, payload);
+            if (!response.IsSuccessStatusCode) return false;
+
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            return doc.RootElement.TryGetProperty("valid", out var validProp) && validProp.GetBoolean();
+        }
+
+        // 6. Deactivate serial key from this computer (transfers license slot)
+        public async Task<bool> DeactivateLicenseAsync(string serialKey, string deviceId)
+        {
+            var payload = new { key = serialKey, deviceId = deviceId };
+            var url = $"{_baseUrl}/api/apps/{_appSlug}/licenses/deactivate";
+            var response = await _http.PostAsJsonAsync(url, payload);
+            return response.IsSuccessStatusCode;
+        }
+    }
+}
+```
+
+---
+
+#### 2. JavaScript / TypeScript (Node.js / Electron / Tauri Frontend)
+
+Using native `fetch`:
+
+```typescript
+export class AlsaBaseAppClient {
+  constructor(
+    private baseUrl: string,
+    private appSlug: string
+  ) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+  }
+
+  // 1. Check if device is banned or locked
+  async checkDevice(deviceId: string): Promise<{ allowed: boolean; isLocked: boolean; lockReason?: string }> {
+    const res = await fetch(
+      `${this.baseUrl}/api/apps/${encodeURIComponent(this.appSlug)}/devices/check?deviceId=${encodeURIComponent(deviceId)}`
+    );
+    return res.json();
+  }
+
+  // 2. Check for application update
+  async checkUpdate(currentVersion: string, deviceId?: string, platform = "windows") {
+    const params = new URLSearchParams({ currentVersion, platform });
+    if (deviceId) params.set("deviceId", deviceId);
+
+    const res = await fetch(
+      `${this.baseUrl}/api/apps/${encodeURIComponent(this.appSlug)}/check-update?${params.toString()}`
+    );
+    return res.json();
+  }
+
+  // 3. Activate a serial key
+  async activateLicense(payload: {
+    key: string;
+    deviceId: string;
+    deviceName?: string;
+    osName?: string;
+    platform?: string;
+  }) {
+    const res = await fetch(
+      `${this.baseUrl}/api/apps/${encodeURIComponent(this.appSlug)}/licenses/activate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Activation failed");
+    return data;
+  }
+
+  // 4. Validate license on application boot
+  async validateLicense(key: string, deviceId: string) {
+    const res = await fetch(
+      `${this.baseUrl}/api/apps/${encodeURIComponent(this.appSlug)}/licenses/validate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, deviceId }),
+      }
+    );
+    return res.json();
+  }
+
+  // 5. Deactivate license from current computer
+  async deactivateLicense(key: string, deviceId: string) {
+    const res = await fetch(
+      `${this.baseUrl}/api/apps/${encodeURIComponent(this.appSlug)}/licenses/deactivate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, deviceId }),
+      }
+    );
+    return res.json();
+  }
+}
+```
+
+---
+
+#### 3. Rust (Tauri / CLI / Desktop)
+
+Using `reqwest` and `serde`:
+
+```rust
+use serde::{Deserialize, Serialize};
+use std::error::Error;
+
+#[derive(Serialize)]
+struct ActivatePayload<'a> {
+    key: &'a str,
+    #[serde(rename = "deviceId")]
+    device_id: &'a str,
+    #[serde(rename = "deviceName")]
+    device_name: &'a str,
+    platform: &'a str,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ValidateResponse {
+    pub valid: bool,
+    #[serde(rename = "isLocked")]
+    pub is_locked: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct UpdateResponse {
+    #[serde(rename = "updateAvailable")]
+    pub update_available: bool,
+    #[serde(rename = "latestVersion")]
+    pub latest_version: Option<String>,
+    #[serde(rename = "downloadUrl")]
+    pub download_url: Option<String>,
+    #[serde(rename = "isAutomatic")]
+    pub is_automatic: bool,
+}
+
+pub struct AlsaBaseApp {
+    base_url: String,
+    app_slug: String,
+    client: reqwest::Client,
+}
+
+impl AlsaBaseApp {
+    pub fn new(base_url: &str, app_slug: &str) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            app_slug: app_slug.to_string(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    // Check for updates
+    pub async fn check_update(&self, current_ver: &str, device_id: &str) -> Result<UpdateResponse, Box<dyn Error>> {
+        let url = format!(
+            "{}/api/apps/{}/check-update?currentVersion={}&platform=windows&deviceId={}",
+            self.base_url, self.app_slug, current_ver, device_id
+        );
+        let resp = self.client.get(&url).send().await?.json::<UpdateResponse>().await?;
+        Ok(resp)
+    }
+
+    // Activate license serial
+    pub async fn activate_license(&self, key: &str, device_id: &str, machine_name: &str) -> Result<bool, Box<dyn Error>> {
+        let url = format!("{}/api/apps/{}/licenses/activate", self.base_url, self.app_slug);
+        let payload = ActivatePayload {
+            key,
+            device_id,
+            device_name: machine_name,
+            platform: "windows",
+        };
+        let res = self.client.post(&url).json(&payload).send().await?;
+        Ok(res.status().is_success())
+    }
+
+    // Validate license on startup
+    pub async fn validate_license(&self, key: &str, device_id: &str) -> Result<ValidateResponse, Box<dyn Error>> {
+        let url = format!("{}/api/apps/{}/licenses/validate", self.base_url, self.app_slug);
+        let body = serde_json::json!({ "key": key, "deviceId": device_id });
+        let resp = self.client.post(&url).json(&body).send().await?.json::<ValidateResponse>().await?;
+        Ok(resp)
+    }
+}
+```
+
+---
+
+#### 4. Python (Desktop GUI / PySide / Requests)
+
+```python
+import platform
+import uuid
+import requests
+
+class AlsaBaseAppClient:
+    def __init__(self, base_url: str, app_slug: str):
+        self.base_url = base_url.rstrip("/")
+        self.app_slug = app_slug
+        self.session = requests.Session()
+
+    @staticmethod
+    def get_hardware_id() -> str:
+        """Returns stable hardware MAC-based node identifier."""
+        return f"PC-{uuid.getnode():012x}"
+
+    def check_device(self, device_id: str) -> dict:
+        """Check if hardware ID is permitted or locked."""
+        url = f"{self.base_url}/api/apps/{self.app_slug}/devices/check"
+        resp = self.session.get(url, params={"deviceId": device_id}, timeout=10)
+        return resp.json()
+
+    def check_update(self, current_version: str, device_id: str, platform_name: str = "windows") -> dict:
+        """Query for new releases and mandatory upgrade requirements."""
+        url = f"{self.base_url}/api/apps/{self.app_slug}/check-update"
+        resp = self.session.get(url, params={
+            "currentVersion": current_version,
+            "platform": platform_name,
+            "deviceId": device_id
+        }, timeout=10)
+        return resp.json()
+
+    def activate_license(self, serial_key: str, device_id: str) -> dict:
+        """Bind serial key to this PC machine."""
+        url = f"{self.base_url}/api/apps/{self.app_slug}/licenses/activate"
+        payload = {
+            "key": serial_key.strip().upper(),
+            "deviceId": device_id,
+            "deviceName": platform.node(),
+            "osName": f"{platform.system()} {platform.release()}",
+            "platform": platform.system().lower()
+        }
+        resp = self.session.post(url, json=payload, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
+
+    def validate_license(self, serial_key: str, device_id: str) -> dict:
+        """Validate license validity on application launch."""
+        url = f"{self.base_url}/api/apps/{self.app_slug}/licenses/validate"
+        resp = self.session.post(url, json={"key": serial_key, "deviceId": device_id}, timeout=10)
+        return resp.json()
+
+    def deactivate_license(self, serial_key: str, device_id: str) -> bool:
+        """Release activation slot on uninstallation or license transfer."""
+        url = f"{self.base_url}/api/apps/{self.app_slug}/licenses/deactivate"
+        resp = self.session.post(url, json={"key": serial_key, "deviceId": device_id}, timeout=10)
+        return resp.status_code == 200
+```
+
+---
+
+#### 5. cURL / Command Line Quick Reference
+
+```bash
+# 1. Check if device is banned or locked
+curl "http://127.0.0.1:8090/api/apps/desktop-app/devices/check?deviceId=PC-HWID-98234"
+
+# 2. Check for update
+curl "http://127.0.0.1:8090/api/apps/desktop-app/check-update?currentVersion=1.0.0&platform=windows&deviceId=PC-HWID-98234"
+
+# 3. Activate a serial number
+curl -X POST "http://127.0.0.1:8090/api/apps/desktop-app/licenses/activate" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"ABCD-EFGH-IJKL-MNOP","deviceId":"PC-HWID-98234","deviceName":"Office-PC","platform":"windows"}'
+
+# 4. Validate serial key on boot
+curl -X POST "http://127.0.0.1:8090/api/apps/desktop-app/licenses/validate" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"ABCD-EFGH-IJKL-MNOP","deviceId":"PC-HWID-98234"}'
+
+# 5. Deactivate serial key (free seat)
+curl -X POST "http://127.0.0.1:8090/api/apps/desktop-app/licenses/deactivate" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"ABCD-EFGH-IJKL-MNOP","deviceId":"PC-HWID-98234"}'
+```
 
 #### `GET /api/apps/:slug/versions`
 Lists all releases for the application.

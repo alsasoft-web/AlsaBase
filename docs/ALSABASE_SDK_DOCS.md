@@ -709,12 +709,162 @@ const batch = await ab.apps.manageCreateLicenses({
 });
 console.log(`Generated ${batch.createdCount} licenses`);
 
-// 5. Superuser: Pre-ban or lock a computer ID
-await ab.apps.manageLockDevice({
-  appSlug: "desktop-app",
-  deviceId: "PC-HWID-MALICIOUS",
-  reason: "Compromised machine / Piracy detected",
-});
+### End-to-End Desktop / Client App Lifecycle Flow
+
+Here is the complete production workflow for desktop applications (Tauri, Electron, React Native, or Node.js) combining device lock checks, auto-updates, and serial key licensing:
+
+```typescript
+import { AlsaBase, ClientResponseError } from "alsabase";
+
+const ab = new AlsaBase("https://alsabase.example.com");
+
+export interface AppInitState {
+  isLicensed: boolean;
+  needsUpdate: boolean;
+  updateUrl?: string;
+  isMandatoryUpdate: boolean;
+  deviceLocked: boolean;
+  lockReason?: string;
+}
+
+export class AppSecurityManager {
+  private appSlug = "my-desktop-app";
+  private currentVersion = "1.0.0";
+  private deviceId: string;
+
+  constructor(deviceId: string) {
+    this.deviceId = deviceId;
+  }
+
+  /**
+   * Run full verification on application launch.
+   */
+  async initialize(): Promise<AppInitState> {
+    // Step 1: Check device hardware ban / lock status
+    const deviceCheck = await ab.apps.checkDevice(this.appSlug, this.deviceId);
+    if (deviceCheck.isLocked) {
+      return {
+        isLicensed: false,
+        needsUpdate: false,
+        isMandatoryUpdate: false,
+        deviceLocked: true,
+        lockReason: deviceCheck.lockReason || "Device locked by administrator",
+      };
+    }
+
+    // Step 2: Check for application updates
+    let needsUpdate = false;
+    let isMandatoryUpdate = false;
+    let updateUrl: string | undefined;
+
+    try {
+      const update = await ab.apps.checkUpdate(this.appSlug, {
+        currentVersion: this.currentVersion,
+        platform: "windows",
+        deviceId: this.deviceId,
+      });
+
+      if (update.hasUpdate) {
+        needsUpdate = true;
+        isMandatoryUpdate = update.isAutomatic || update.isMandatory;
+        updateUrl = update.downloadUrl || undefined;
+      }
+    } catch (err) {
+      console.warn("Failed to check update:", err);
+    }
+
+    // Step 3: Check stored license key
+    const storedSerial = this.getStoredLicenseKey();
+    let isLicensed = false;
+
+    if (storedSerial) {
+      try {
+        const val = await ab.apps.validateLicense(this.appSlug, {
+          key: storedSerial,
+          deviceId: this.deviceId,
+        });
+        isLicensed = Boolean(val.valid && !val.isLocked);
+      } catch (err) {
+        // Optional offline grace period check
+        isLicensed = this.checkOfflineGracePeriod();
+      }
+    }
+
+    return {
+      isLicensed,
+      needsUpdate,
+      isMandatoryUpdate,
+      updateUrl,
+      deviceLocked: false,
+    };
+  }
+
+  /**
+   * Activate a new serial key provided by the user.
+   */
+  async activate(serialKey: string, deviceName?: string) {
+    const result = await ab.apps.activateLicense(this.appSlug, {
+      key: serialKey.trim().toUpperCase(),
+      deviceId: this.deviceId,
+      deviceName: deviceName || "Desktop-PC",
+      platform: "windows",
+    });
+
+    if (result.success || result.activated) {
+      this.saveStoredLicenseKey(serialKey.trim().toUpperCase());
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Deactivate license on this PC to free up a slot for another machine.
+   */
+  async deactivate(): Promise<boolean> {
+    const storedSerial = this.getStoredLicenseKey();
+    if (!storedSerial) return true;
+
+    try {
+      await ab.apps.deactivateLicense(this.appSlug, {
+        key: storedSerial,
+        deviceId: this.deviceId,
+      });
+      this.clearStoredLicenseKey();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private getStoredLicenseKey(): string | null {
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem("alsabase_license_key");
+    }
+    return null;
+  }
+
+  private saveStoredLicenseKey(key: string) {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("alsabase_license_key", key);
+      localStorage.setItem("alsabase_license_validated_at", Date.now().toString());
+    }
+  }
+
+  private clearStoredLicenseKey() {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("alsabase_license_key");
+      localStorage.removeItem("alsabase_license_validated_at");
+    }
+  }
+
+  private checkOfflineGracePeriod(graceDays = 7): boolean {
+    if (typeof localStorage === "undefined") return false;
+    const lastValidated = localStorage.getItem("alsabase_license_validated_at");
+    if (!lastValidated) return false;
+    const elapsed = Date.now() - parseInt(lastValidated, 10);
+    return elapsed < graceDays * 24 * 60 * 60 * 1000;
+  }
+}
 ```
 
 ---

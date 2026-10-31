@@ -22,6 +22,14 @@
   --color-neon-dim: rgba(16, 229, 122, 0.12);
   --color-neon-text: #052e16;
 
+  /* Button text contrast: Dark text in Dark mode, Light text in Light mode */
+  --color-btn-primary-bg: #10e57a;
+  --color-btn-primary-text: #052e16;
+  --color-btn-primary-hover: #00c862;
+  --color-btn-blue-bg: #38bdf8;
+  --color-btn-blue-text: #082f49;
+  --color-btn-blue-hover: #0ea5e9;
+
   --color-text-primary: #f3f4f6; /* shade 0: primary text */
   --color-text-secondary: #e5e7eb; /* shade 1: secondary text */
   --color-text-dimmed: #9ca3af; /* shade 2: dimmed text */
@@ -56,6 +64,14 @@
   --color-neon-glow: rgba(5, 150, 105, 0.15);
   --color-neon-dim: rgba(5, 150, 105, 0.1);
   --color-neon-text: #ffffff;
+
+  /* Button text contrast: Light text in Light mode */
+  --color-btn-primary-bg: #059669;
+  --color-btn-primary-text: #ffffff;
+  --color-btn-primary-hover: #047857;
+  --color-btn-blue-bg: #0284c7;
+  --color-btn-blue-text: #ffffff;
+  --color-btn-blue-hover: #0369a1;
 
   --color-text-primary: #0f172a; /* slate 900: primary text */
   --color-text-secondary: #334155; /* slate 700: secondary text */
