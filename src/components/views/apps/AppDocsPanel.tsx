@@ -221,6 +221,15 @@ export const AppDocsPanel: React.FC<AppDocsPanelProps> = ({
                 ),
               },
               {
+                value: "logs",
+                label: (
+                  <Group gap={6} wrap="nowrap">
+                    <IconTerminal2 size={14} color="#06b6d4" />
+                    <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>Send Logs &amp; Crashes</Text>
+                  </Group>
+                ),
+              },
+              {
                 value: "lifecycle",
                 label: (
                   <Group gap={6} wrap="nowrap">

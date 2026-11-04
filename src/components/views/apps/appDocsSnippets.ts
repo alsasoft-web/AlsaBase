@@ -10,7 +10,7 @@
  */
 
 export interface DocModuleInfo {
-  id: "updates" | "gatekeeper" | "licenses" | "auth" | "lifecycle";
+  id: "updates" | "gatekeeper" | "licenses" | "auth" | "logs" | "lifecycle";
   title: string;
   badge: string;
   badgeColor: string;
@@ -326,6 +326,86 @@ export function getDocModules(appSlug: string, _origin?: string): DocModuleInfo[
       ],
     },
     {
+      id: "logs",
+      title: "Crash Reporting & Diagnostics Logs Upload",
+      badge: "Logging & Telemetry",
+      badgeColor: "cyan",
+      description: "Send client-side crash reports, exception stack traces, diagnostic telemetry, or full log files directly to AlsaBase from any desktop, mobile, web, or backend application.",
+      endpoints: [
+        {
+          method: "POST",
+          path: `/api/apps/${appSlug}/logs`,
+          auth: "Public / Client",
+          description: "Upload a single log entry, exception trace, or batch of telemetry logs from the application.",
+          requestBody: JSON.stringify(
+            {
+              level: "ERROR",
+              message: "Unhandled NullReferenceException in PaymentProcessor",
+              stackTrace: "at PaymentProcessor.Process (line 42)\\nat Main (line 12)",
+              deviceId: "PC-HWID-8AC0-B851",
+              deviceName: "Workstation-A",
+              appVersion: "1.0.0",
+              platform: "windows",
+              metadata: {
+                userId: "usr_123",
+                feature: "billing",
+              },
+            },
+            null,
+            2
+          ),
+          successResponse: JSON.stringify(
+            {
+              success: true,
+              count: 1,
+              message: "Successfully logged 1 entries.",
+            },
+            null,
+            2
+          ),
+          errorResponse: JSON.stringify(
+            {
+              error: "No valid log payload provided.",
+            },
+            null,
+            2
+          ),
+        },
+        {
+          method: "POST",
+          path: `/api/apps/${appSlug}/logs/upload`,
+          auth: "Public / Client",
+          description: "Upload a raw log file string (.log, .txt, or JSON) directly from a client machine.",
+          requestBody: JSON.stringify(
+            {
+              rawContent: "2026-11-04 12:00:00 [ERROR] Connection lost\\n   at System.Net.Sockets...",
+              fileName: "crash_dump.log",
+              deviceId: "PC-HWID-8AC0-B851",
+              appVersion: "1.0.0",
+            },
+            null,
+            2
+          ),
+          successResponse: JSON.stringify(
+            {
+              success: true,
+              count: 1,
+              message: "Successfully logged 1 entries.",
+            },
+            null,
+            2
+          ),
+          errorResponse: JSON.stringify(
+            {
+              error: "No valid log payload provided.",
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    },
+    {
       id: "lifecycle",
       title: "Complete Integration Lifecycle",
       badge: "All-in-One",
@@ -341,7 +421,7 @@ export function getDocModules(appSlug: string, _origin?: string): DocModuleInfo[
 // ============================================================================
 
 export function getModuleSnippet(
-  moduleId: "updates" | "gatekeeper" | "licenses" | "auth" | "lifecycle",
+  moduleId: "updates" | "gatekeeper" | "licenses" | "auth" | "logs" | "lifecycle",
   lang: string,
   appSlug: string,
   origin: string
@@ -355,6 +435,8 @@ export function getModuleSnippet(
       return getLicenseSnippet(lang, appSlug, origin);
     case "auth":
       return getAuthSnippet(lang, origin);
+    case "logs":
+      return getLogsSnippet(lang, appSlug, origin);
     case "lifecycle":
     default:
       return getFullLifecycleSnippet(lang, appSlug, origin);
@@ -1494,5 +1576,385 @@ curl -X POST "${origin}/api/apps/${appSlug}/licenses/activate" \\
 curl -X POST "${origin}/api/apps/${appSlug}/licenses/validate" \\
   -H "Content-Type: application/json" \\
   -d '{"key":"XXXX-XXXX-XXXX-XXXX","deviceId":"PC-HWID-98234"}'`;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 6. APP LOGS & CRASH REPORTING
+// ----------------------------------------------------------------------------
+function getLogsSnippet(lang: string, appSlug: string, origin: string): string {
+  switch (lang) {
+    case "csharp":
+      return `using System;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.Win32;
+
+namespace AlsaBaseClient
+{
+    public class AlsaBaseLogger
+    {
+        private static readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        private const string BaseUrl = "${origin}";
+        private const string AppSlug = "${appSlug}";
+        private const string AppVersion = "1.0.0";
+
+        /// <summary>
+        /// Reads persistent Windows Registry MachineGuid.
+        /// </summary>
+        public static string GetHardwareId()
+        {
+            try
+            {
+                using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64)
+                                           .OpenSubKey(@"SOFTWARE\\Microsoft\\Cryptography");
+                var guid = key?.GetValue("MachineGuid")?.ToString();
+                if (!string.IsNullOrEmpty(guid)) return guid;
+            }
+            catch { }
+            return Environment.MachineName;
+        }
+
+        /// <summary>
+        /// Upload a single log entry or crash report to AlsaBase
+        /// </summary>
+        public static async Task<bool> SendLogAsync(string level, string message, Exception ex = null, object metadata = null)
+        {
+            try
+            {
+                var payload = new
+                {
+                    level = level.ToUpper(),
+                    message = message,
+                    stackTrace = ex?.ToString(),
+                    deviceId = GetHardwareId(),
+                    deviceName = Environment.MachineName,
+                    appVersion = AppVersion,
+                    platform = "windows",
+                    metadata = metadata
+                };
+
+                var response = await _http.PostAsJsonAsync($"{BaseUrl}/api/apps/{AppSlug}/logs", payload);
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AlsaBaseLogger] Failed to upload log: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Upload a full .log or .txt file from disk to AlsaBase
+        /// </summary>
+        public static async Task<bool> SendLogFileAsync(string filePath)
+        {
+            if (!File.Exists(filePath)) return false;
+
+            try
+            {
+                var content = await File.ReadAllTextAsync(filePath);
+                var payload = new
+                {
+                    rawContent = content,
+                    fileName = Path.GetFileName(filePath),
+                    deviceId = GetHardwareId(),
+                    appVersion = AppVersion,
+                    platform = "windows"
+                };
+
+                var response = await _http.PostAsJsonAsync($"{BaseUrl}/api/apps/{AppSlug}/logs/upload", payload);
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[AlsaBaseLogger] Failed to upload log file: {e.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Install automatic global crash and unhandled exception reporter
+        /// </summary>
+        public static void HookGlobalExceptions()
+        {
+            AppDomain.CurrentDomain.UnhandledException += async (sender, args) =>
+            {
+                if (args.ExceptionObject is Exception ex)
+                {
+                    await SendLogAsync("FATAL", $"Crash in AppDomain: {ex.Message}", ex);
+                }
+            };
+        }
+    }
+}`;
+
+    case "rust":
+      return `// Cargo.toml dependencies:
+// reqwest = { version = "0.12", features = ["json"] }
+// serde = { version = "1.0", features = ["derive"] }
+// serde_json = "1.0"
+// tokio = { version = "1", features = ["full"] }
+
+use reqwest::Client;
+use serde_json::json;
+use std::time::Duration;
+
+const BASE_URL: &str = "${origin}";
+const APP_SLUG: &str = "${appSlug}";
+const APP_VERSION: &str = "1.0.0";
+
+pub struct AlsaBaseLogger {
+    client: Client,
+    device_id: String,
+}
+
+impl AlsaBaseLogger {
+    pub fn new(device_id: impl Into<String>) -> Self {
+        Self {
+            client: Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .unwrap(),
+            device_id: device_id.into(),
+        }
+    }
+
+    /// Upload a single log or crash report
+    pub async fn send_log(
+        &self,
+        level: &str,
+        message: &str,
+        stack_trace: Option<&str>,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let url = format!("{}/api/apps/{}/logs", BASE_URL, APP_SLUG);
+        let payload = json!({
+            "level": level.to_uppercase(),
+            "message": message,
+            "stackTrace": stack_trace,
+            "deviceId": self.device_id,
+            "appVersion": APP_VERSION,
+            "platform": std::env::consts::OS,
+            "metadata": metadata,
+        });
+
+        let resp = self.client.post(&url).json(&payload).send().await?;
+        Ok(resp.status().is_success())
+    }
+
+    /// Upload a raw log file string
+    pub async fn send_log_file(
+        &self,
+        file_name: &str,
+        raw_content: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let url = format!("{}/api/apps/{}/logs/upload", BASE_URL, APP_SLUG);
+        let payload = json!({
+            "rawContent": raw_content,
+            "fileName": file_name,
+            "deviceId": self.device_id,
+            "appVersion": APP_VERSION,
+            "platform": std::env::consts::OS,
+        });
+
+        let resp = self.client.post(&url).json(&payload).send().await?;
+        Ok(resp.status().is_success())
+    }
+}`;
+
+    case "python":
+      return `import sys
+import platform
+import traceback
+import requests
+
+BASE_URL = "${origin}"
+APP_SLUG = "${appSlug}"
+APP_VERSION = "1.0.0"
+
+def get_hardware_id() -> str:
+    """Returns a stable machine identifier."""
+    return f"PC-{platform.node()}-{platform.machine()}"
+
+def send_log(level: str, message: str, stack_trace: str = None, metadata: dict = None) -> bool:
+    """Send an error, warning, or diagnostic log to AlsaBase."""
+    url = f"{BASE_URL}/api/apps/{APP_SLUG}/logs"
+    payload = {
+        "level": level.upper(),
+        "message": str(message),
+        "stackTrace": stack_trace,
+        "deviceId": get_hardware_id(),
+        "deviceName": platform.node(),
+        "appVersion": APP_VERSION,
+        "platform": platform.system().lower(),
+        "metadata": metadata or {}
+    }
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        return res.status_code == 200
+    except Exception as e:
+        print(f"[AlsaBaseLogger] Failed to upload log: {e}")
+        return False
+
+def send_log_file(file_path: str) -> bool:
+    """Upload a full log file (.log, .txt, or .json) to AlsaBase."""
+    url = f"{BASE_URL}/api/apps/{APP_SLUG}/logs/upload"
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            raw_content = f.read()
+        payload = {
+            "rawContent": raw_content,
+            "fileName": file_path.split("/")[-1].split("\\\\")[-1],
+            "deviceId": get_hardware_id(),
+            "appVersion": APP_VERSION,
+            "platform": platform.system().lower()
+        }
+        res = requests.post(url, json=payload, timeout=20)
+        return res.status_code == 200
+    except Exception as e:
+        print(f"[AlsaBaseLogger] Failed to upload log file: {e}")
+        return False
+
+# Automatic global unhandled exception hook
+def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    trace = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    send_log("FATAL", f"Unhandled exception: {exc_value}", stack_trace=trace)
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+sys.excepthook = handle_uncaught_exception`;
+
+    case "fetch":
+      return `const BASE_URL = "${origin}";
+const APP_SLUG = "${appSlug}";
+const APP_VERSION = "1.0.0";
+
+/**
+ * Report an error, crash, or telemetry log to AlsaBase
+ */
+export async function sendAppLog(options: {
+  level?: "INFO" | "WARN" | "ERROR" | "FATAL" | "DEBUG";
+  message: string;
+  stackTrace?: string;
+  deviceId?: string;
+  metadata?: Record<string, any>;
+}) {
+  try {
+    const res = await fetch(\`\${BASE_URL}/api/apps/\${APP_SLUG}/logs\`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        level: options.level || "INFO",
+        message: options.message,
+        stackTrace: options.stackTrace,
+        deviceId: options.deviceId,
+        appVersion: APP_VERSION,
+        platform: typeof window !== "undefined" ? "web" : process.platform,
+        metadata: options.metadata,
+      }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error("[AlsaBaseLogger] Failed to upload log:", err);
+    return false;
+  }
+}
+
+// Global browser error listeners
+if (typeof window !== "undefined") {
+  window.addEventListener("error", (event) => {
+    sendAppLog({
+      level: "ERROR",
+      message: event.message,
+      stackTrace: event.error?.stack,
+    });
+  });
+
+  window.addEventListener("unhandledrejection", (event) => {
+    sendAppLog({
+      level: "ERROR",
+      message: \`Unhandled Promise Rejection: \${event.reason}\`,
+      stackTrace: event.reason?.stack,
+    });
+  });
+}`;
+
+    case "sdk":
+      return `import AlsaBase from "alsabase";
+
+const ab = new AlsaBase("${origin}");
+
+// 1. Report a single error or crash event
+await ab.apps.uploadLog("${appSlug}", {
+  level: "ERROR",
+  message: "Failed to connect to billing gateway",
+  stackTrace: error.stack,
+  deviceId: await ab.apps.getHwid(), // Stable cross-platform HWID
+  appVersion: "1.0.0",
+  platform: "windows",
+  metadata: {
+    userId: "usr_123",
+    feature: "checkout",
+  },
+});
+
+// 2. Batch upload multiple telemetry logs
+await ab.apps.uploadLogs("${appSlug}", [
+  { level: "INFO", message: "Application launched", appVersion: "1.0.0" },
+  { level: "WARN", message: "High latency detected (450ms)", appVersion: "1.0.0" },
+]);
+
+// 3. Upload a raw log file string (.log, .txt, or .json)
+import fs from "node:fs";
+const fileContent = fs.readFileSync("./crash_dump.log", "utf8");
+
+await ab.apps.uploadLogFile("${appSlug}", fileContent, {
+  fileName: "crash_dump.log",
+  deviceId: await ab.apps.getHwid(),
+  appVersion: "1.0.0",
+  level: "ERROR",
+});`;
+
+    case "endpoints":
+    default:
+      return `# 1. Send a single error or crash report
+curl -X POST "${origin}/api/apps/${appSlug}/logs" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "level": "ERROR",
+    "message": "Connection timeout after 30000ms",
+    "stackTrace": "at Socket.connect (line 45)\\nat Client (line 12)",
+    "deviceId": "PC-HWID-8AC0-B851",
+    "deviceName": "Workstation-A",
+    "appVersion": "1.0.0",
+    "platform": "windows",
+    "metadata": { "endpoint": "/sync", "code": "ETIMEDOUT" }
+  }'
+
+# 2. Batch upload multiple log entries
+curl -X POST "${origin}/api/apps/${appSlug}/logs" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "logs": [
+      { "level": "INFO", "message": "App started", "appVersion": "1.0.0" },
+      { "level": "WARN", "message": "Disk space under 2GB", "appVersion": "1.0.0" }
+    ]
+  }'
+
+# 3. Upload a raw log file string
+curl -X POST "${origin}/api/apps/${appSlug}/logs/upload" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "rawContent": "2026-11-04 12:00:00 [ERROR] Out of memory\\n  at MemoryManager...",
+    "fileName": "crash.log",
+    "deviceId": "PC-HWID-8AC0-B851",
+    "appVersion": "1.0.0"
+  }'`;
   }
 }
