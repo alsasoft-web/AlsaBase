@@ -647,13 +647,56 @@ await ab.apps.updateVersion(release.id, {
 await ab.apps.deleteVersion(release.id);
 ```
 
+### Consistent Hardware ID (HWID) Generation
+
+To reliably tie licenses, activations, and gatekeeper checks to a physical computer or client environment without relying on fragile or changing identifiers, the SDK provides `getHwid()` and `getHwidSync()`.
+
+These functions generate an **always-consistent, persistent, and tamper-resistant** device identifier across all platforms:
+- **Windows**: Permanent registry `MachineGuid` (`HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography`), motherboard UUID, CPU identifier, and primary physical MAC address.
+- **Linux**: Standard `/etc/machine-id` or `/var/lib/dbus/machine-id`, CPU specs, and network MAC addresses.
+- **macOS**: `IOPlatformUUID` via `IOPlatformExpertDevice`, `sysctl kern.uuid`, and hardware MAC addresses.
+- **Web Browsers / PWAs / WebViews**: Persistent `localStorage` device token combined with deterministic device and canvas 2D fingerprinting.
+- **Tauri / Electron / React Native**: Automatically selects the native OS seed when available, falling back smoothly to persistent storage.
+
+```typescript
+import { AlsaBase, getHwid, getHwidSync } from "alsabase";
+
+const ab = new AlsaBase("https://alsabase.example.com");
+
+// 1. Asynchronous generation (Recommended)
+const hwid = await ab.apps.getHwid();
+// or via standalone function:
+const sameHwid = await getHwid();
+// or on client root:
+const clientHwid = await ab.getHwid();
+
+// 2. Synchronous generation (Zero-latency instant lookup)
+const syncHwid = ab.apps.getHwidSync();
+const syncStandalone = getHwidSync();
+
+// 3. Output formats: 'hex' (default 64-char), 'uuid' (36-char 8-4-4-4-12), or 'short' (16-char)
+const uuid = await ab.apps.getHwid({ format: "uuid" });
+// => "8ac0b851-bd5c-0b59-d7ee-9ffa8f75eea4"
+
+const shortCode = await ab.apps.getHwid({ format: "short", prefix: "HWID-" });
+// => "HWID-8AC0-B851-BD5C-0B59"
+
+// 4. App-scoped HWID (Deterministically salted for a specific application slug)
+const appScopedHwid = await ab.apps.getHwid("my-desktop-app");
+// or:
+const appHwid = await ab.apps.getHwid({ appSlug: "my-desktop-app", prefix: "PC-" });
+```
+
 ### Device Locking & Hardware Protection
 
 Protect your application by verifying client hardware identifiers and preventing banned computers from accessing updates:
 
 ```typescript
+// Generate consistent hardware identifier
+const deviceId = await ab.apps.getHwid();
+
 // Check if a client device is locked / banned
-const deviceCheck = await ab.apps.checkDevice("desktop-app", "PC-HWID-98234");
+const deviceCheck = await ab.apps.checkDevice("desktop-app", deviceId);
 if (deviceCheck.isLocked) {
   throw new Error("This computer has been locked: " + (deviceCheck.lockReason || "Access prohibited"));
 }
@@ -662,7 +705,7 @@ if (deviceCheck.isLocked) {
 const update = await ab.checkAppUpdate("desktop-app", {
   currentVersion: "1.0.0",
   platform: "windows",
-  deviceId: "PC-HWID-98234",
+  deviceId,
 });
 ```
 
@@ -671,10 +714,13 @@ const update = await ab.checkAppUpdate("desktop-app", {
 Issue serial numbers with device activation limits and validate client PC licenses:
 
 ```typescript
+// Generate hardware ID
+const deviceId = await ab.apps.getHwid();
+
 // 1. Activate a license key on a client machine
 const activation = await ab.apps.activateLicense("desktop-app", {
   key: "ABCD-EFGH-IJKL-MNOP",
-  deviceId: "PC-HWID-98234",
+  deviceId,
   deviceName: "John's Workstation",
   platform: "windows",
 });
@@ -685,7 +731,7 @@ console.log("Activations used:", activation.license.activatedCount, "/", activat
 // 2. Validate license validity on launch
 const check = await ab.apps.validateLicense("desktop-app", {
   key: "ABCD-EFGH-IJKL-MNOP",
-  deviceId: "PC-HWID-98234",
+  deviceId,
 });
 
 if (!check.valid) {

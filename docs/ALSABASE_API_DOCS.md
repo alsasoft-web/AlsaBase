@@ -657,6 +657,9 @@ Checks if a newer release is available for an app. If `deviceId` is provided and
 #### `GET /api/apps/:slug/devices/check`
 Checks if a specific client computer / hardware device is permitted or locked from using the application.
 
+> [!TIP]
+> In JavaScript/TypeScript runtimes, you can generate an always-consistent, tamper-resistant `deviceId` directly using `await ab.apps.getHwid()` or `getHwid()` from the `alsabase` SDK. In C#, query Windows Registry `MachineGuid` (`Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography", "MachineGuid", null)`); in Rust, read `/etc/machine-id` or query `IOPlatformUUID`.
+
 - **Query Parameters**:
   - `deviceId` (string, required): Hardware identifier / MAC address / machine GUID.
 - **Response**: `200 OK`

@@ -9,6 +9,7 @@ import { RealtimeService } from "./services/RealtimeService";
 import { FileService } from "./services/FileService";
 import { HooksService } from "./services/HooksService";
 import { AppsService } from "./services/AppsService";
+import { getHwid, getHwidSync } from "./utils/hwid";
 import type {
   SendOptions,
   RecordModel,
@@ -16,6 +17,7 @@ import type {
   CommonOptions,
   AppUpdateCheckOptions,
   AppUpdateCheckResult,
+  HwidOptions,
 } from "./types";
 
 export class AlsaBase {
@@ -71,6 +73,43 @@ export class AlsaBase {
     options: AppUpdateCheckOptions
   ): Promise<AppUpdateCheckResult> {
     return this.apps.checkUpdate(appSlug, options);
+  }
+
+  /**
+   * Generates an always-consistent, persistent Hardware ID (HWID) / Device ID
+   * for the current machine or client environment.
+   *
+   * @param optionsOrSlug Optional application slug (string) or HwidOptions configuration object
+   */
+  async getHwid(optionsOrSlug?: string | HwidOptions): Promise<string> {
+    return getHwid(optionsOrSlug);
+  }
+
+  /**
+   * Synchronously generates an always-consistent, persistent Hardware ID (HWID) / Device ID.
+   *
+   * @param optionsOrSlug Optional application slug (string) or HwidOptions configuration object
+   */
+  getHwidSync(optionsOrSlug?: string | HwidOptions): string {
+    return getHwidSync(optionsOrSlug);
+  }
+
+  /**
+   * Static helper: Generates an always-consistent, persistent Hardware ID (HWID) / Device ID.
+   *
+   * @param optionsOrSlug Optional application slug (string) or HwidOptions configuration object
+   */
+  static async getHwid(optionsOrSlug?: string | HwidOptions): Promise<string> {
+    return getHwid(optionsOrSlug);
+  }
+
+  /**
+   * Static helper: Synchronously generates an always-consistent Hardware ID (HWID) / Device ID.
+   *
+   * @param optionsOrSlug Optional application slug (string) or HwidOptions configuration object
+   */
+  static getHwidSync(optionsOrSlug?: string | HwidOptions): string {
+    return getHwidSync(optionsOrSlug);
   }
 
   /**

@@ -1,4 +1,5 @@
 import { BaseService } from "./BaseService";
+import { getHwid, getHwidSync } from "../utils/hwid";
 import type {
   AppModel,
   AppVersionModel,
@@ -11,9 +12,30 @@ import type {
   AppLicenseActivateResult,
   AppDeviceCheckResult,
   CommonOptions,
+  HwidOptions,
 } from "../types";
 
 export class AppsService extends BaseService {
+  /**
+   * Generates an always-consistent, persistent Hardware ID (HWID) / Device ID
+   * for the current machine or client environment.
+   *
+   * Works across Node.js, Electron, Browsers, WebViews, Tauri, and hybrid runtimes.
+   *
+   * @param optionsOrSlug Optional application slug (string) or HwidOptions configuration object
+   */
+  async getHwid(optionsOrSlug?: string | HwidOptions): Promise<string> {
+    return getHwid(optionsOrSlug);
+  }
+
+  /**
+   * Synchronously generates an always-consistent, persistent Hardware ID (HWID) / Device ID.
+   *
+   * @param optionsOrSlug Optional application slug (string) or HwidOptions configuration object
+   */
+  getHwidSync(optionsOrSlug?: string | HwidOptions): string {
+    return getHwidSync(optionsOrSlug);
+  }
   /**
    * Check if an update is available for an app.
    * Compares the app's current version against published versions and verifies

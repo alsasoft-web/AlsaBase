@@ -224,3 +224,24 @@ samp {
 .mantine-Select-option[data-hovered] {
   background-color: var(--color-bg-card-hover) !important;
 }
+
+/* Mantine Button & ActionIcon loading state fixes:
+   Cleanly hide the inner content (label, text, and left/right section icons)
+   while preserving the button layout and dimensions, completely eliminating
+   loader overlap / collision with inner text. */
+.mantine-Button-root[data-loading] .mantine-Button-inner,
+button[data-loading] .mantine-Button-inner,
+[data-loading] > .mantine-Button-inner {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.mantine-Button-loader {
+  pointer-events: none;
+}
+
+.mantine-ActionIcon-root[data-loading] .mantine-ActionIcon-icon,
+button[data-loading] .mantine-ActionIcon-icon {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}

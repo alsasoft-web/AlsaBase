@@ -727,8 +727,11 @@ async function checkDeviceGatekeeper(deviceId, deviceName = "Client-PC") {
 
 const ab = new AlsaBase("${origin}");
 
+// Generate always-consistent Hardware ID for this machine
+const deviceId = await ab.apps.getHwid();
+
 // Check device status and auto-register host
-const check = await ab.apps.checkDevice("${appSlug}", "PC-HWID-98234", {
+const check = await ab.apps.checkDevice("${appSlug}", deviceId, {
   deviceName: "Workstation-1",
   platform: "windows"
 });
@@ -921,10 +924,13 @@ async function deactivateLicense(key, deviceId) {
 
 const ab = new AlsaBase("${origin}");
 
+// Generate consistent Hardware ID for this machine
+const deviceId = await ab.apps.getHwid();
+
 // 1. Activate serial number
 const activation = await ab.apps.activateLicense("${appSlug}", {
   key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234",
+  deviceId,
   deviceName: "Office-PC",
   platform: "windows"
 });
@@ -933,14 +939,14 @@ console.log("Seats used:", activation.license.activatedCount, "/", activation.li
 // 2. Validate license
 const val = await ab.apps.validateLicense("${appSlug}", {
   key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234"
+  deviceId
 });
 console.log("Is valid:", val.valid);
 
 // 3. Deactivate license
 await ab.apps.deactivateLicense("${appSlug}", {
   key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234"
+  deviceId
 });`;
 
     case "endpoints":
@@ -1448,14 +1454,18 @@ async function activateLicense(key, deviceId) {
 
 const ab = new AlsaBase("${origin}");
 
+// Consistent HWID generator
+const deviceId = await ab.apps.getHwid();
+
 // 1. Gatekeeper Check
-const check = await ab.apps.checkDevice("${appSlug}", "PC-HWID-98234");
+const check = await ab.apps.checkDevice("${appSlug}", deviceId);
 if (check.isLocked) throw new Error(check.lockReason || "Device locked");
 
-// 2. Update Check
+// 2. Update Check (with device enforcement)
 const update = await ab.apps.checkUpdate("${appSlug}", {
   currentVersion: "1.0.0",
-  platform: "windows"
+  platform: "windows",
+  deviceId
 });
 if (update.hasUpdate) {
   console.log("Update available: v" + update.latestVersion);
@@ -1464,7 +1474,7 @@ if (update.hasUpdate) {
 // 3. License Activation
 const activation = await ab.apps.activateLicense("${appSlug}", {
   key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234"
+  deviceId
 });`;
 
     case "endpoints":

@@ -496,4 +496,26 @@ export interface AppVersionUploadOptions extends CommonOptions {
     | string;
 }
 
+export interface HwidOptions {
+  /**
+   * Optional application slug or namespace salt to produce app-scoped HWIDs.
+   * If provided, the generated HWID is uniquely and deterministically tied to this app.
+   */
+  appSlug?: string;
+
+  /**
+   * Optional prefix prepended to the returned HWID string (e.g. "HWID-", "PC-").
+   */
+  prefix?: string;
+
+  /**
+   * Return format:
+   * - 'hex' (default): 64-character lowercase SHA-256 hexadecimal string
+   * - 'uuid': 36-character standard 8-4-4-4-12 UUID format (e.g. "d3dc4313-b282-b739-fba5-ad4bcb3cae3e")
+   * - 'short': 19-character uppercase hyphenated token (e.g. "D3DC-4313-B282-B739")
+   */
+  format?: "hex" | "uuid" | "short";
+}
+
+
 

@@ -1,4 +1,4 @@
-import { createTheme, MantineColorsTuple } from "@mantine/core";
+import { createTheme, MantineColorsTuple, Button } from "@mantine/core";
 
 export const neonGreen: MantineColorsTuple = [
   "#e6fcf0",
@@ -39,18 +39,24 @@ export const theme = createTheme({
   defaultRadius: "md",
   cursorType: "pointer",
   components: {
-    Button: {
+    Button: Button.extend({
       defaultProps: {
         radius: "md"
       },
-      styles: {
+      styles: (_theme, props) => ({
         root: {
           fontWeight: 600,
           transition: "all 0.15s ease",
           letterSpacing: "-0.01em"
-        }
-      }
-    },
+        },
+        inner: props.loading
+          ? {
+              opacity: 0,
+              visibility: "hidden"
+            }
+          : undefined
+      })
+    }),
     Card: {
       defaultProps: {
         radius: "md"

@@ -1,4 +1,4 @@
-import { AlsaBase } from "../src/index";
+import { AlsaBase, getHwid, getHwidSync } from "../src/index";
 import { ClientResponseError } from "../src/ClientResponseError";
 
 async function runTests() {
@@ -154,6 +154,49 @@ async function runTests() {
   unsubRealtime();
   await client.realtime.unsubscribe("posts");
   console.log("   Realtime Socket.IO interface validation passed.\n");
+
+  // Test 8: Consistent Hardware ID (HWID) Generation
+  console.log("8. Testing Consistent Hardware ID (HWID) Generation...");
+  const hwidAsync = await getHwid();
+  const hwidSync = getHwidSync();
+  const hwidClient = await client.getHwid();
+  const hwidApps = await client.apps.getHwid();
+  const hwidStatic = await AlsaBase.getHwid();
+
+  console.log("   Generated HWID (Async):", hwidAsync);
+  console.log("   Generated HWID (Sync): ", hwidSync);
+
+  if (!hwidAsync || typeof hwidAsync !== "string" || hwidAsync.length < 16) {
+    throw new Error("Invalid HWID returned from getHwid()");
+  }
+
+  // Consistency checks
+  if (hwidAsync !== hwidSync) {
+    throw new Error(`HWID mismatch between async (${hwidAsync}) and sync (${hwidSync})`);
+  }
+  if (hwidAsync !== hwidClient || hwidAsync !== hwidApps || hwidAsync !== hwidStatic) {
+    throw new Error("HWID mismatch across SDK entry points");
+  }
+
+  // Format checks
+  const uuidHwid = await getHwid({ format: "uuid" });
+  console.log("   UUID format:", uuidHwid);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuidHwid)) {
+    throw new Error(`UUID format mismatch: ${uuidHwid}`);
+  }
+
+  const shortHwid = await getHwid({ format: "short", prefix: "HWID-" });
+  console.log("   Short format with prefix:", shortHwid);
+  if (!shortHwid.startsWith("HWID-") || !/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(shortHwid.replace("HWID-", ""))) {
+    throw new Error(`Short format with prefix mismatch: ${shortHwid}`);
+  }
+
+  const scopedHwid = await getHwid("my-custom-app");
+  if (!scopedHwid || scopedHwid === hwidAsync) {
+    throw new Error("App-scoped HWID should be deterministically salted");
+  }
+
+  console.log("   HWID generation verified successfully.\n");
 
   console.log(
     "All AlsaBase SDK unit and integration checks executed successfully!",

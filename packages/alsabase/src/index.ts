@@ -19,6 +19,9 @@ export { FileService } from "./services/FileService";
 export { HooksService } from "./services/HooksService";
 export { AppsService } from "./services/AppsService";
 
+// Utilities & Hardware ID
+export { getHwid, getHwidSync } from "./utils/hwid";
+
 // Types
 export * from "./types";
 
