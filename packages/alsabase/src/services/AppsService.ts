@@ -350,6 +350,37 @@ export class AppsService extends BaseService {
   }
 
   /**
+   * Upload binary installer file directly to an existing app release (Requires Superuser).
+   * Transmits raw binary bytes without Base64 overhead (saves ~33% bandwidth and avoids gateway timeouts).
+   *
+   * @param releaseId The version release ID (e.g. 'rel_1234')
+   * @param fileData Raw Buffer, Blob, or stream of the installer file
+   * @param fileName Name of the file (e.g. 'Setup-1.0.0.exe')
+   * @param options Common request options
+   */
+  async uploadVersionBinary(
+    releaseId: string,
+    fileData: any,
+    fileName: string,
+    options?: CommonOptions
+  ): Promise<AppVersionModel> {
+    const query: Record<string, string> = { fileName };
+    return this.send<AppVersionModel>(
+      `/api/apps/manage/versions/${encodeURIComponent(releaseId)}/upload`,
+      {
+        method: "POST",
+        query,
+        body: fileData,
+        headers: {
+          "Content-Type": "application/octet-stream",
+          ...(options?.headers || {}),
+        },
+        requestKey: options?.requestKey,
+      }
+    );
+  }
+
+  /**
    * Update an existing app version's metadata (Requires Superuser).
    */
   async updateVersion(

@@ -25,6 +25,11 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8090;
 
+// Set generous timeouts for large application installer / binary uploads
+server.setTimeout(600000); // 10 minutes
+server.keepAliveTimeout = 120000; // 2 minutes
+server.headersTimeout = 125000; // 2 minutes 5 seconds
+
 // Initialize Socket.IO and WebSocket Realtime Servers
 initSocketIOServer(server);
 initWebSocketServer(server);

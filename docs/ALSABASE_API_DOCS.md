@@ -1270,6 +1270,15 @@ Uploads and publishes a new release version with an attached binary package.
   }
   ```
 
+#### `POST /api/apps/manage/versions/:id/upload`
+Streams raw binary installer file directly to disk for an existing version release without Base64 overhead.
+- **Headers**:
+  - `Content-Type: application/octet-stream`
+- **Query Parameters**:
+  - `fileName`: Name of the executable file (e.g. `Setup-1.2.0.exe`)
+- **Body**: Raw binary stream / Buffer.
+- **Response**: `200 OK` (Updated AppRelease object).
+
 #### `PUT /api/apps/manage/versions/:id`
 Updates release metadata (importance, channel, active status, release notes).
 

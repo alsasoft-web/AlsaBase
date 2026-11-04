@@ -637,6 +637,20 @@ const release = await ab.apps.uploadVersion({
   },
 });
 
+// 2b. High-Performance Direct Binary Streaming Upload (Recommended for large installers > 10MB)
+// Avoids 33% Base64 overhead and prevents reverse-proxy 504 Gateway Timeouts:
+const releaseMeta = await ab.apps.uploadVersion({
+  appSlug: "desktop-app",
+  version: "1.2.0",
+  platform: "windows",
+  importance: "optional",
+  releaseNotes: "High-performance release",
+});
+
+// Stream raw installer binary directly to disk:
+const installerBuffer = fs.readFileSync("AlsaBase-Setup-1.2.0.exe");
+await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "AlsaBase-Setup-1.2.0.exe");
+
 // 3. Update version metadata
 await ab.apps.updateVersion(release.id, {
   importance: "optional",

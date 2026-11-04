@@ -842,6 +842,69 @@ appsRouter.post("/manage/versions", requireSuperuser, (req: Request, res: Respon
 });
 
 /**
+ * POST /api/apps/manage/versions/:id/upload
+ * Stream raw binary installer file directly to disk for an existing version release.
+ * Avoids Base64 encoding overhead (saves ~33% bandwidth) and event-loop blocking.
+ */
+appsRouter.post("/manage/versions/:id/upload", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const id = getParam(req.params.id);
+    const release = db.prepare("SELECT * FROM _app_releases WHERE id = ?").get(id) as unknown as AppReleaseRecord | undefined;
+    if (!release) {
+      return res.status(404).json({ error: "Version release not found" });
+    }
+
+    const app = db.prepare("SELECT * FROM _apps WHERE id = ?").get(release.app_id) as unknown as AppRecord | undefined;
+    if (!app) {
+      return res.status(404).json({ error: "Associated application not found" });
+    }
+
+    const origName = (req.query.fileName as string) || (req.headers["x-file-name"] as string) || "release.exe";
+    const ext = path.extname(origName) || "";
+    const base = path.parse(origName).name.replace(/[^a-zA-Z0-9_-]/g, "_") || "release";
+    const cleanVersion = release.version;
+    const savedFileName = `${base}_${cleanVersion}${ext}`;
+
+    const targetDir = path.join(APP_RELEASES_DIR, app.slug, cleanVersion);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    const savedFilePath = path.join(targetDir, savedFileName);
+    const writeStream = fs.createWriteStream(savedFilePath);
+    const hash = crypto.createHash("sha256");
+    let totalBytes = 0;
+
+    req.on("data", (chunk: Buffer) => {
+      totalBytes += chunk.length;
+      hash.update(chunk);
+    });
+
+    req.pipe(writeStream);
+
+    writeStream.on("finish", () => {
+      const fileHash = hash.digest("hex");
+      const now = new Date().toISOString();
+
+      db.prepare(
+        `UPDATE _app_releases
+         SET file_name = ?, file_path = ?, file_size = ?, file_hash = ?, updated_at = ?
+         WHERE id = ?`
+      ).run(savedFileName, savedFilePath, totalBytes, fileHash, now, id);
+
+      const updated = db.prepare("SELECT * FROM _app_releases WHERE id = ?").get(id) as unknown as AppReleaseRecord;
+      res.json(formatReleaseResponse(req, updated, app.slug));
+    });
+
+    writeStream.on("error", (err) => {
+      res.status(500).json({ error: "Failed to write file to disk: " + err.message });
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * PUT /api/apps/manage/versions/:id
  * Update release metadata
  */
