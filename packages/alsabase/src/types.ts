@@ -517,5 +517,46 @@ export interface HwidOptions {
   format?: "hex" | "uuid" | "short";
 }
 
+export interface AppLogModel {
+  id: string;
+  appId: string;
+  appSlug: string;
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | string;
+  message: string;
+  stackTrace?: string | null;
+  deviceId?: string | null;
+  deviceName?: string | null;
+  appVersion?: string | null;
+  platform?: string | null;
+  userIdentifier?: string | null;
+  metadata?: any;
+  fileName?: string | null;
+  createdAt: string;
+}
+
+export interface AppLogUploadPayload {
+  level?: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | string;
+  message: string;
+  stackTrace?: string;
+  deviceId?: string;
+  deviceName?: string;
+  appVersion?: string;
+  platform?: string;
+  userIdentifier?: string;
+  metadata?: any;
+  fileName?: string;
+  createdAt?: string;
+}
+
+export interface AppLogStatsResult {
+  total: number;
+  fatal: number;
+  error: number;
+  warn: number;
+  info: number;
+  debug: number;
+  uniqueDevices: number;
+}
+
 
 

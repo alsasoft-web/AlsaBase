@@ -38,6 +38,7 @@ import {
   IconPlayerPlay,
   IconPlayerPause,
   IconDownload,
+  IconCloudUpload,
   IconTerminal2,
   IconClock,
   IconCode,
@@ -389,6 +390,44 @@ export const LogsView: React.FC = () => {
       message: `Exported ${logs.length} log records to JSON file.`,
       color: "teal",
     });
+  };
+
+  const [isUploadingLogs, setIsUploadingLogs] = useState(false);
+  const handleImportLogs = (file: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const text = (e.target?.result as string) || "";
+      if (!text.trim()) return;
+      setIsUploadingLogs(true);
+      try {
+        let payload: any = { rawContent: text };
+        try {
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed)) payload = { logs: parsed };
+          else if (parsed && typeof parsed === "object") payload = { logs: [parsed] };
+        } catch {
+          // Plain text log format
+        }
+        const res = await api.uploadSystemLogs(payload);
+        notifications.show({
+          title: "Logs Imported",
+          message: res.message || `Imported ${res.count} log records.`,
+          color: "teal",
+        });
+        loadLogs();
+        loadStatsAndTimeline();
+      } catch (err: any) {
+        notifications.show({
+          title: "Import Failed",
+          message: err.message,
+          color: "red",
+        });
+      } finally {
+        setIsUploadingLogs(false);
+      }
+    };
+    reader.readAsText(file);
   };
 
   // Timeline buckets computation
@@ -1398,6 +1437,32 @@ export const LogsView: React.FC = () => {
                       style={{ color: "var(--color-text-dimmed)" }}
                     >
                       <IconDownload size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+
+                  <input
+                    id="system-logs-upload-input"
+                    type="file"
+                    accept=".json,.log,.txt"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      handleImportLogs(file);
+                      e.target.value = "";
+                    }}
+                  />
+                  <Tooltip label="Upload / Import Logs (.json, .log, .txt)" withArrow position="top">
+                    <ActionIcon
+                      variant="subtle"
+                      size="md"
+                      loading={isUploadingLogs}
+                      onClick={() => {
+                        const input = document.getElementById("system-logs-upload-input") as HTMLInputElement;
+                        if (input) input.click();
+                      }}
+                      style={{ color: "var(--color-text-dimmed)" }}
+                    >
+                      <IconCloudUpload size={16} />
                     </ActionIcon>
                   </Tooltip>
 

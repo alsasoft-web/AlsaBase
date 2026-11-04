@@ -338,6 +338,33 @@ export interface AppDeviceCheckResult {
   device?: AppDeviceItem | null;
 }
 
+export interface AppLogItem {
+  id: string;
+  appId: string;
+  appSlug: string;
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | string;
+  message: string;
+  stackTrace?: string | null;
+  deviceId?: string | null;
+  deviceName?: string | null;
+  appVersion?: string | null;
+  platform?: string | null;
+  userIdentifier?: string | null;
+  metadata?: any;
+  fileName?: string | null;
+  createdAt: string;
+}
+
+export interface AppLogStats {
+  total: number;
+  fatal: number;
+  error: number;
+  warn: number;
+  info: number;
+  debug: number;
+  uniqueDevices: number;
+}
+
 const API_BASE = "/api";
 
 function getAuthHeader(): Record<string, string> {
@@ -980,6 +1007,16 @@ export const api = {
     );
   },
 
+  async uploadSystemLogs(payload: { logs?: any[]; rawContent?: string }) {
+    return request<{ success: boolean; count: number; message: string }>(
+      "/logs/upload",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
   // Realtime Subscriptions & Web Events
   subscribe<T = any>(
     topicOrTopics: string | string[],
@@ -1344,6 +1381,97 @@ export const api = {
   async checkAppDevice(appSlug: string, deviceId: string) {
     return request<AppDeviceCheckResult>(
       `/apps/${encodeURIComponent(appSlug)}/devices/check?deviceId=${encodeURIComponent(deviceId)}`,
+    );
+  },
+
+  async getAppLogs(
+    appIdOrSlug: string,
+    params?: {
+      page?: number;
+      limit?: number;
+      level?: string;
+      search?: string;
+      deviceId?: string;
+      appVersion?: string;
+    },
+  ) {
+    const searchParams = new URLSearchParams();
+    searchParams.append("appId", appIdOrSlug);
+    if (params?.page) searchParams.append("page", String(params.page));
+    if (params?.limit) searchParams.append("limit", String(params.limit));
+    if (params?.level) searchParams.append("level", params.level);
+    if (params?.search) searchParams.append("search", params.search);
+    if (params?.deviceId) searchParams.append("deviceId", params.deviceId);
+    if (params?.appVersion) searchParams.append("appVersion", params.appVersion);
+    return request<{
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      items: AppLogItem[];
+    }>(`/apps/manage/logs?${searchParams.toString()}`);
+  },
+
+  async getAppLogStats(appIdOrSlug: string) {
+    return request<AppLogStats>(
+      `/apps/manage/logs/stats?appId=${encodeURIComponent(appIdOrSlug)}`,
+    );
+  },
+
+  async uploadAppLogs(payload: {
+    appId?: string;
+    appSlug?: string;
+    logs?: any[];
+    log?: any;
+    rawContent?: string;
+    fileName?: string;
+    deviceId?: string;
+    deviceName?: string;
+    appVersion?: string;
+    platform?: string;
+    level?: string;
+  }) {
+    return request<{ success: boolean; count: number; message: string }>(
+      "/apps/manage/logs/upload",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  async deleteAppLogsBatch(payload: {
+    ids?: string[];
+    all?: boolean;
+    appId?: string;
+    appSlug?: string;
+    level?: string;
+    search?: string;
+  }) {
+    return request<{ success: boolean; count: number; message?: string }>(
+      "/apps/manage/logs/delete-batch",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  },
+
+  async deleteAppLog(id: string) {
+    return request<{ success: boolean; message: string }>(
+      `/apps/manage/logs/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+      },
+    );
+  },
+
+  async clearAppLogs(appIdOrSlug: string) {
+    return request<{ success: boolean; count: number; message: string }>(
+      `/apps/manage/logs?appId=${encodeURIComponent(appIdOrSlug)}`,
+      {
+        method: "DELETE",
+      },
     );
   },
 };

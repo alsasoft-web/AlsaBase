@@ -183,6 +183,24 @@ export function initSystemTables() {
       FOREIGN KEY (license_id) REFERENCES _app_licenses(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS _app_logs (
+      id TEXT PRIMARY KEY,
+      app_id TEXT NOT NULL,
+      app_slug TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'INFO',
+      message TEXT NOT NULL,
+      stack_trace TEXT,
+      device_id TEXT,
+      device_name TEXT,
+      app_version TEXT,
+      platform TEXT,
+      user_identifier TEXT,
+      metadata_json TEXT,
+      file_name TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (app_id) REFERENCES _apps(id) ON DELETE CASCADE
+    );
+
     -- Performance Indexes
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON _logs(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_logs_level ON _logs(level);
@@ -203,6 +221,11 @@ export function initSystemTables() {
     CREATE INDEX IF NOT EXISTS idx_app_devices_device_id ON _app_devices(device_id);
     CREATE INDEX IF NOT EXISTS idx_app_devices_license_id ON _app_devices(license_id);
     CREATE INDEX IF NOT EXISTS idx_app_devices_is_locked ON _app_devices(is_locked);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_app_id ON _app_logs(app_id);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_app_slug ON _app_logs(app_slug);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_created_at ON _app_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_level ON _app_logs(level);
+    CREATE INDEX IF NOT EXISTS idx_app_logs_device_id ON _app_logs(device_id);
   `);
 }
 

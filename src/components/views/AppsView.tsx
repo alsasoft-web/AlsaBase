@@ -28,6 +28,7 @@ import {
 } from "@mantine/core";
 import { getModuleSnippet } from "./apps/appDocsSnippets";
 import { AppDocsPanel } from "./apps/AppDocsPanel";
+import { AppLogsPanel } from "./apps/AppLogsPanel";
 import { notifications } from "@mantine/notifications";
 import {
   IconRocket,
@@ -94,6 +95,7 @@ export const AppsView: React.FC = () => {
   const [licenseStatusFilter, setLicenseStatusFilter] = useState<string | null>("all");
   const [deviceSearch, setDeviceSearch] = useState("");
   const [deviceLockedFilter, setDeviceLockedFilter] = useState<string | null>("all");
+  const [openAppLogsUploadModal, setOpenAppLogsUploadModal] = useState(false);
 
   // Create/Edit App Modal
   const [isAppModalOpen, setIsAppModalOpen] = useState(false);
@@ -1395,6 +1397,27 @@ export const AppsView: React.FC = () => {
                     </Button>
                   )}
 
+                  {activeTab === "logs" && (
+                    <Button
+                      size={isMobile ? "xs" : "sm"}
+                      variant="filled"
+                      leftSection={<IconCloudUpload size={isMobile ? 14 : 16} color="var(--color-btn-primary-text, var(--color-neon-text))" />}
+                      onClick={() => setOpenAppLogsUploadModal(true)}
+                      style={{
+                        backgroundColor: "var(--color-btn-primary-bg, var(--color-neon-primary))",
+                        color: "var(--color-btn-primary-text, var(--color-neon-text))",
+                        fontWeight: 600,
+                        flex: isMobile ? "1 1 auto" : "initial",
+                      }}
+                      styles={{
+                        label: { color: "var(--color-btn-primary-text, var(--color-neon-text))" },
+                        section: { color: "var(--color-btn-primary-text, var(--color-neon-text))" },
+                      }}
+                    >
+                      Upload Logs
+                    </Button>
+                  )}
+
                   <Group gap={4}>
                     <Tooltip label="Edit App Information" withArrow>
                       <ActionIcon
@@ -1579,6 +1602,12 @@ export const AppsView: React.FC = () => {
                     }
                   >
                     Connected Devices & PC Locks
+                  </Tabs.Tab>
+                  <Tabs.Tab
+                    value="logs"
+                    leftSection={<IconTerminal2 size={16} />}
+                  >
+                    App Logs
                   </Tabs.Tab>
                   <Tabs.Tab
                     value="docs"
@@ -2549,7 +2578,29 @@ export const AppsView: React.FC = () => {
               </Tabs.Panel>
 
               {/* ============================================================ */}
-              {/* TAB 4: DOCS & INTEGRATION CODE EXAMPLES */}
+              {/* TAB 4: APP LOGS & CRASH REPORTS */}
+              {/* ============================================================ */}
+              <Tabs.Panel
+                value="logs"
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <AppLogsPanel
+                  selectedApp={selectedApp}
+                  isMobile={!!isMobile}
+                  devices={devices}
+                  isUploadModalOpen={openAppLogsUploadModal}
+                  onOpenUploadModal={() => setOpenAppLogsUploadModal(true)}
+                  onCloseUploadModal={() => setOpenAppLogsUploadModal(false)}
+                />
+              </Tabs.Panel>
+
+              {/* ============================================================ */}
+              {/* TAB 5: DOCS & INTEGRATION CODE EXAMPLES */}
               {/* ============================================================ */}
               <Tabs.Panel
                 value="docs"

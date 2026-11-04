@@ -29,6 +29,7 @@ export const RESERVED_SLUGS = new Set([
   "releases",
   "licenses",
   "devices",
+  "logs",
 ]);
 
 export function generateSerialKey(format?: string): string {
@@ -150,6 +151,23 @@ export interface AppDeviceRecord {
   last_seen_at: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface AppLogRecord {
+  id: string;
+  app_id: string;
+  app_slug: string;
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR" | "FATAL" | string;
+  message: string;
+  stack_trace?: string | null;
+  device_id?: string | null;
+  device_name?: string | null;
+  app_version?: string | null;
+  platform?: string | null;
+  user_identifier?: string | null;
+  metadata_json?: string | null;
+  file_name?: string | null;
+  created_at: string;
 }
 
 function getParam(param: string | string[] | undefined): string {
@@ -279,6 +297,192 @@ function formatDeviceResponse(dev: AppDeviceRecord) {
     createdAt: dev.created_at,
     updatedAt: dev.updated_at,
   };
+}
+
+export function formatLogResponse(r: AppLogRecord) {
+  let parsedMetadata: any = null;
+  if (r.metadata_json) {
+    try {
+      parsedMetadata = JSON.parse(r.metadata_json);
+    } catch {
+      parsedMetadata = r.metadata_json;
+    }
+  }
+
+  return {
+    id: r.id,
+    appId: r.app_id,
+    appSlug: r.app_slug,
+    level: r.level || "INFO",
+    message: r.message,
+    stackTrace: r.stack_trace || null,
+    deviceId: r.device_id || null,
+    deviceName: r.device_name || null,
+    appVersion: r.app_version || null,
+    platform: r.platform || null,
+    userIdentifier: r.user_identifier || null,
+    metadata: parsedMetadata,
+    fileName: r.file_name || null,
+    createdAt: r.created_at,
+  };
+}
+
+export function parseRawLogContent(
+  rawContent: string,
+  defaults: {
+    appId: string;
+    appSlug: string;
+    level?: string;
+    deviceId?: string;
+    appVersion?: string;
+    fileName?: string;
+    platform?: string;
+  }
+): AppLogRecord[] {
+  const trimmed = rawContent.trim();
+  if (!trimmed) return [];
+
+  // 1. Try parsing as JSON first
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      const now = new Date().toISOString();
+      return items.map((item) => {
+        const id = `applog_${crypto.randomBytes(8).toString("hex")}`;
+        const level = (item.level || defaults.level || "INFO").toString().toUpperCase();
+        const message = item.message || item.msg || item.error || JSON.stringify(item);
+        const stackTrace = item.stackTrace || item.stack_trace || item.stack || null;
+        const deviceId = item.deviceId || item.device_id || defaults.deviceId || null;
+        const deviceName = item.deviceName || item.device_name || null;
+        const appVersion = item.appVersion || item.app_version || item.version || defaults.appVersion || null;
+        const platform = item.platform || item.os || defaults.platform || null;
+        const userIdentifier = item.userIdentifier || item.user_identifier || item.user || item.email || null;
+        const meta = item.metadata || item.meta || item.metadata_json;
+        const metadataJson = meta ? (typeof meta === "string" ? meta : JSON.stringify(meta)) : null;
+        const createdAt = item.createdAt || item.timestamp || item.created_at || now;
+
+        return {
+          id,
+          app_id: defaults.appId,
+          app_slug: defaults.appSlug,
+          level,
+          message: String(message),
+          stack_trace: stackTrace ? String(stackTrace) : null,
+          device_id: deviceId ? String(deviceId) : null,
+          device_name: deviceName ? String(deviceName) : null,
+          app_version: appVersion ? String(appVersion) : null,
+          platform: platform ? String(platform) : null,
+          user_identifier: userIdentifier ? String(userIdentifier) : null,
+          metadata_json: metadataJson,
+          file_name: defaults.fileName || null,
+          created_at: createdAt,
+        };
+      });
+    } catch {
+      // Fall through to plain text parsing
+    }
+  }
+
+  // 2. Plaintext line-by-line parsing
+  const lines = rawContent.split(/\r?\n/);
+  const records: AppLogRecord[] = [];
+  let currentRecord: AppLogRecord | null = null;
+  const now = new Date().toISOString();
+  const linePattern = /^(?:\[?(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\]?\s+)?(?:\[?(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|CRITICAL)\]?[:\s]+)?(.*)$/i;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line) continue;
+
+    const match = line.match(linePattern);
+    const isIndented = /^\s+(at\s+|Caused by:|Traceback|\.{3}|[A-Z0-9_$]+Error:)/.test(rawLine);
+
+    if (isIndented && currentRecord) {
+      currentRecord.stack_trace = currentRecord.stack_trace
+        ? `${currentRecord.stack_trace}\n${line}`
+        : line;
+    } else if (match && (match[1] || match[2] || !currentRecord)) {
+      if (currentRecord) {
+        records.push(currentRecord);
+      }
+      let rawLvl = (match[2] || defaults.level || "INFO").toUpperCase();
+      if (rawLvl === "WARNING") rawLvl = "WARN";
+      if (rawLvl === "CRITICAL") rawLvl = "FATAL";
+
+      let time = match[1] || now;
+      try {
+        time = new Date(time).toISOString();
+      } catch {
+        time = now;
+      }
+
+      currentRecord = {
+        id: `applog_${crypto.randomBytes(8).toString("hex")}`,
+        app_id: defaults.appId,
+        app_slug: defaults.appSlug,
+        level: rawLvl,
+        message: match[3] || line,
+        stack_trace: null,
+        device_id: defaults.deviceId || null,
+        device_name: null,
+        app_version: defaults.appVersion || null,
+        platform: defaults.platform || null,
+        user_identifier: null,
+        metadata_json: null,
+        file_name: defaults.fileName || null,
+        created_at: time,
+      };
+    } else if (currentRecord) {
+      currentRecord.message += `\n${line}`;
+    }
+  }
+
+  if (currentRecord) {
+    records.push(currentRecord);
+  }
+
+  return records;
+}
+
+export function insertAppLogs(records: AppLogRecord[]): number {
+  if (records.length === 0) return 0;
+  const insertStmt = db.prepare(`
+    INSERT INTO _app_logs (
+      id, app_id, app_slug, level, message, stack_trace,
+      device_id, device_name, app_version, platform,
+      user_identifier, metadata_json, file_name, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  db.exec("BEGIN");
+  try {
+    let count = 0;
+    for (const r of records) {
+      insertStmt.run(
+        r.id,
+        r.app_id,
+        r.app_slug,
+        r.level,
+        r.message,
+        r.stack_trace ?? null,
+        r.device_id ?? null,
+        r.device_name ?? null,
+        r.app_version ?? null,
+        r.platform ?? null,
+        r.user_identifier ?? null,
+        r.metadata_json ?? null,
+        r.file_name ?? null,
+        r.created_at
+      );
+      count++;
+    }
+    db.exec("COMMIT");
+    return count;
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 /**
@@ -1436,6 +1640,341 @@ appsRouter.delete("/manage/devices/:id", requireSuperuser, (req: Request, res: R
   }
 });
 
+/**
+ * GET /api/apps/manage/logs
+ * Query application logs with pagination, filtering by level, search, device, version
+ */
+appsRouter.get("/manage/logs", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+    const offset = (page - 1) * limit;
+
+    const whereClauses: string[] = [];
+    const params: any[] = [];
+
+    const appId = req.query.appId as string;
+    const appSlug = req.query.appSlug as string;
+
+    if (appId) {
+      whereClauses.push("(app_id = ? OR app_slug = ?)");
+      params.push(appId, appId);
+    } else if (appSlug) {
+      whereClauses.push("(app_id = ? OR app_slug = ?)");
+      params.push(appSlug, appSlug);
+    }
+
+    const level = req.query.level as string;
+    if (level && level.toUpperCase() !== "ALL") {
+      whereClauses.push("level = ?");
+      params.push(level.toUpperCase());
+    }
+
+    const deviceId = req.query.deviceId as string;
+    if (deviceId && deviceId.trim()) {
+      whereClauses.push("device_id = ?");
+      params.push(deviceId.trim());
+    }
+
+    const appVersion = req.query.appVersion as string;
+    if (appVersion && appVersion.trim()) {
+      whereClauses.push("app_version = ?");
+      params.push(appVersion.trim());
+    }
+
+    const search = req.query.search as string;
+    if (search && search.trim()) {
+      whereClauses.push(
+        "(message LIKE ? OR stack_trace LIKE ? OR metadata_json LIKE ? OR device_id LIKE ? OR device_name LIKE ? OR file_name LIKE ? OR user_identifier LIKE ?)"
+      );
+      const term = `%${search.trim()}%`;
+      params.push(term, term, term, term, term, term, term);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    const countRow = db
+      .prepare(`SELECT COUNT(*) as total FROM _app_logs ${whereSql}`)
+      .get(...params) as { total: number };
+    const total = countRow ? countRow.total : 0;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    const rows = db
+      .prepare(
+        `SELECT * FROM _app_logs
+         ${whereSql}
+         ORDER BY created_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(...params, limit, offset) as unknown as AppLogRecord[];
+
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages,
+      items: rows.map(formatLogResponse),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/apps/manage/logs/stats
+ * Summary stats of logs for an app
+ */
+appsRouter.get("/manage/logs/stats", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const appId = req.query.appId as string;
+    const appSlug = req.query.appSlug as string;
+
+    const whereClauses: string[] = [];
+    const params: any[] = [];
+
+    if (appId) {
+      whereClauses.push("(app_id = ? OR app_slug = ?)");
+      params.push(appId, appId);
+    } else if (appSlug) {
+      whereClauses.push("(app_id = ? OR app_slug = ?)");
+      params.push(appSlug, appSlug);
+    }
+
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    const totalRow = db.prepare(`SELECT COUNT(*) as count FROM _app_logs ${whereSql}`).get(...params) as any;
+    const errorRow = db.prepare(`SELECT COUNT(*) as count FROM _app_logs ${whereSql ? whereSql + " AND" : "WHERE"} level IN ('ERROR', 'FATAL')`).get(...params) as any;
+    const warnRow = db.prepare(`SELECT COUNT(*) as count FROM _app_logs ${whereSql ? whereSql + " AND" : "WHERE"} level = 'WARN'`).get(...params) as any;
+    const infoRow = db.prepare(`SELECT COUNT(*) as count FROM _app_logs ${whereSql ? whereSql + " AND" : "WHERE"} level = 'INFO'`).get(...params) as any;
+    const debugRow = db.prepare(`SELECT COUNT(*) as count FROM _app_logs ${whereSql ? whereSql + " AND" : "WHERE"} level = 'DEBUG'`).get(...params) as any;
+    const deviceRow = db.prepare(`SELECT COUNT(DISTINCT device_id) as count FROM _app_logs ${whereSql ? whereSql + " AND" : "WHERE"} device_id IS NOT NULL`).get(...params) as any;
+
+    res.json({
+      total: totalRow?.count || 0,
+      error: errorRow?.count || 0,
+      warn: warnRow?.count || 0,
+      info: infoRow?.count || 0,
+      debug: debugRow?.count || 0,
+      uniqueDevices: deviceRow?.count || 0,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/apps/manage/logs/upload
+ * Superuser upload of logs (file contents, JSON batch, or individual log)
+ */
+appsRouter.post("/manage/logs/upload", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const {
+      appId,
+      appSlug,
+      logs,
+      log,
+      rawContent,
+      fileName,
+      deviceId,
+      deviceName,
+      appVersion,
+      platform,
+      level,
+    } = req.body;
+
+    let targetApp: AppRecord | undefined;
+    if (appId) {
+      targetApp = db.prepare("SELECT * FROM _apps WHERE id = ? OR slug = ?").get(appId, appId) as unknown as AppRecord | undefined;
+    } else if (appSlug) {
+      targetApp = db.prepare("SELECT * FROM _apps WHERE slug = ? OR id = ?").get(appSlug, appSlug) as unknown as AppRecord | undefined;
+    }
+
+    if (!targetApp) {
+      return res.status(404).json({ error: "Target application not found. Please provide a valid appId or appSlug." });
+    }
+
+    let recordsToInsert: AppLogRecord[] = [];
+
+    if (rawContent && typeof rawContent === "string") {
+      recordsToInsert = parseRawLogContent(rawContent, {
+        appId: targetApp.id,
+        appSlug: targetApp.slug,
+        fileName,
+        deviceId,
+        appVersion,
+        platform,
+        level,
+      });
+    } else if (Array.isArray(logs) && logs.length > 0) {
+      const now = new Date().toISOString();
+      recordsToInsert = logs.map((item) => {
+        const id = `applog_${crypto.randomBytes(8).toString("hex")}`;
+        const itemLevel = (item.level || level || "INFO").toString().toUpperCase();
+        const meta = item.metadata || item.meta || item.metadata_json;
+        return {
+          id,
+          app_id: targetApp!.id,
+          app_slug: targetApp!.slug,
+          level: itemLevel,
+          message: String(item.message || item.msg || item.error || JSON.stringify(item)),
+          stack_trace: item.stackTrace || item.stack_trace || null,
+          device_id: item.deviceId || item.device_id || deviceId || null,
+          device_name: item.deviceName || item.device_name || deviceName || null,
+          app_version: item.appVersion || item.app_version || appVersion || null,
+          platform: item.platform || item.os || platform || null,
+          user_identifier: item.userIdentifier || item.user_identifier || null,
+          metadata_json: meta ? (typeof meta === "string" ? meta : JSON.stringify(meta)) : null,
+          file_name: fileName || item.fileName || item.file_name || null,
+          created_at: item.createdAt || item.timestamp || item.created_at || now,
+        };
+      });
+    } else if (log && typeof log === "object") {
+      const now = new Date().toISOString();
+      const meta = log.metadata || log.meta || log.metadata_json;
+      recordsToInsert = [
+        {
+          id: `applog_${crypto.randomBytes(8).toString("hex")}`,
+          app_id: targetApp.id,
+          app_slug: targetApp.slug,
+          level: (log.level || level || "INFO").toString().toUpperCase(),
+          message: String(log.message || log.msg || "Log entry"),
+          stack_trace: log.stackTrace || log.stack_trace || null,
+          device_id: log.deviceId || log.device_id || deviceId || null,
+          device_name: log.deviceName || log.device_name || deviceName || null,
+          app_version: log.appVersion || log.app_version || appVersion || null,
+          platform: log.platform || log.os || platform || null,
+          user_identifier: log.userIdentifier || log.user_identifier || null,
+          metadata_json: meta ? (typeof meta === "string" ? meta : JSON.stringify(meta)) : null,
+          file_name: fileName || log.fileName || log.file_name || null,
+          created_at: log.createdAt || log.timestamp || log.created_at || now,
+        },
+      ];
+    } else if (req.body.message) {
+      const now = new Date().toISOString();
+      const meta = req.body.metadata || req.body.meta;
+      recordsToInsert = [
+        {
+          id: `applog_${crypto.randomBytes(8).toString("hex")}`,
+          app_id: targetApp.id,
+          app_slug: targetApp.slug,
+          level: (req.body.level || level || "INFO").toString().toUpperCase(),
+          message: String(req.body.message),
+          stack_trace: req.body.stackTrace || req.body.stack_trace || null,
+          device_id: req.body.deviceId || deviceId || null,
+          device_name: req.body.deviceName || deviceName || null,
+          app_version: req.body.appVersion || appVersion || null,
+          platform: req.body.platform || platform || null,
+          user_identifier: req.body.userIdentifier || null,
+          metadata_json: meta ? (typeof meta === "string" ? meta : JSON.stringify(meta)) : null,
+          file_name: fileName || null,
+          created_at: req.body.createdAt || now,
+        },
+      ];
+    }
+
+    if (recordsToInsert.length === 0) {
+      return res.status(400).json({ error: "No valid log records found to upload." });
+    }
+
+    const count = insertAppLogs(recordsToInsert);
+    res.json({
+      success: true,
+      count,
+      message: `Successfully uploaded ${count} log entries for app "${targetApp.name}".`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/apps/manage/logs/delete-batch
+ * Batch delete app logs
+ */
+appsRouter.post("/manage/logs/delete-batch", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const { ids, all, appId, appSlug, level, search } = req.body;
+
+    if (all) {
+      const whereClauses: string[] = [];
+      const params: any[] = [];
+
+      if (appId) {
+        whereClauses.push("(app_id = ? OR app_slug = ?)");
+        params.push(appId, appId);
+      } else if (appSlug) {
+        whereClauses.push("(app_id = ? OR app_slug = ?)");
+        params.push(appSlug, appSlug);
+      }
+
+      if (level && level.toUpperCase() !== "ALL") {
+        whereClauses.push("level = ?");
+        params.push(level.toUpperCase());
+      }
+
+      if (search && search.trim()) {
+        whereClauses.push(
+          "(message LIKE ? OR stack_trace LIKE ? OR metadata_json LIKE ? OR device_id LIKE ?)"
+        );
+        const term = `%${search.trim()}%`;
+        params.push(term, term, term, term);
+      }
+
+      const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+      const result = db.prepare(`DELETE FROM _app_logs ${whereSql}`).run(...params);
+      return res.json({ success: true, count: result.changes, message: "Matching app logs deleted." });
+    }
+
+    if (Array.isArray(ids) && ids.length > 0) {
+      const placeholders = ids.map(() => "?").join(",");
+      const result = db.prepare(`DELETE FROM _app_logs WHERE id IN (${placeholders})`).run(...ids);
+      return res.json({ success: true, count: result.changes });
+    }
+
+    return res.status(400).json({ error: "No log IDs or delete criteria specified." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/apps/manage/logs/:id
+ * Delete a single log record
+ */
+appsRouter.delete("/manage/logs/:id", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const id = getParam(req.params.id);
+    const result = db.prepare("DELETE FROM _app_logs WHERE id = ?").run(id);
+    if (result.changes === 0) {
+      return res.status(404).json({ error: "Log record not found" });
+    }
+    res.json({ success: true, message: "Log record deleted" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/apps/manage/logs
+ * Clear all logs for an app
+ */
+appsRouter.delete("/manage/logs", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const appId = req.query.appId as string;
+    const appSlug = req.query.appSlug as string;
+
+    if (!appId && !appSlug) {
+      return res.status(400).json({ error: "appId or appSlug query parameter is required to clear logs." });
+    }
+
+    const target = appId || appSlug;
+    const result = db.prepare("DELETE FROM _app_logs WHERE app_id = ? OR app_slug = ?").run(target, target);
+    res.json({ success: true, count: result.changes, message: `Cleared ${result.changes} logs.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================================
 // 2. Standalone Download Routes
 // ============================================================================
@@ -2275,4 +2814,145 @@ appsRouter.post("/:slug/licenses/deactivate", (req: Request, res: Response) => {
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * POST /api/apps/:slug/logs
+ * Client endpoint to report/upload logs & crash reports for an application
+ */
+appsRouter.post("/:slug/logs", (req: Request, res: Response) => {
+  try {
+    const slug = getParam(req.params.slug).trim();
+    if (RESERVED_SLUGS.has(slug.toLowerCase())) {
+      return res.status(400).json({ error: "Invalid app slug" });
+    }
+
+    const app = db.prepare("SELECT * FROM _apps WHERE slug = ?").get(slug) as unknown as AppRecord | undefined;
+    if (!app) {
+      return res.status(404).json({ error: `App "${slug}" not found` });
+    }
+
+    let recordsToInsert: AppLogRecord[] = [];
+
+    // Check if raw text body was sent
+    if (typeof req.body === "string" || Buffer.isBuffer(req.body)) {
+      recordsToInsert = parseRawLogContent(req.body.toString("utf8"), {
+        appId: app.id,
+        appSlug: app.slug,
+      });
+    } else if (req.body && req.body.rawContent && typeof req.body.rawContent === "string") {
+      recordsToInsert = parseRawLogContent(req.body.rawContent, {
+        appId: app.id,
+        appSlug: app.slug,
+        fileName: req.body.fileName,
+        deviceId: req.body.deviceId,
+        appVersion: req.body.appVersion,
+        platform: req.body.platform,
+        level: req.body.level,
+      });
+    } else if (Array.isArray(req.body)) {
+      recordsToInsert = parseRawLogContent(JSON.stringify(req.body), {
+        appId: app.id,
+        appSlug: app.slug,
+      });
+    } else if (Array.isArray(req.body?.logs)) {
+      recordsToInsert = parseRawLogContent(JSON.stringify(req.body.logs), {
+        appId: app.id,
+        appSlug: app.slug,
+        deviceId: req.body.deviceId,
+        appVersion: req.body.appVersion,
+        platform: req.body.platform,
+      });
+    } else if (req.body && (req.body.message || req.body.error || req.body.level)) {
+      const now = new Date().toISOString();
+      const meta = req.body.metadata || req.body.meta;
+      recordsToInsert = [
+        {
+          id: `applog_${crypto.randomBytes(8).toString("hex")}`,
+          app_id: app.id,
+          app_slug: app.slug,
+          level: (req.body.level || "INFO").toString().toUpperCase(),
+          message: String(req.body.message || req.body.error || "Client log"),
+          stack_trace: req.body.stackTrace || req.body.stack_trace || null,
+          device_id: req.body.deviceId || req.body.device_id || null,
+          device_name: req.body.deviceName || req.body.device_name || null,
+          app_version: req.body.appVersion || req.body.app_version || null,
+          platform: req.body.platform || req.body.os || null,
+          user_identifier: req.body.userIdentifier || req.body.user_identifier || null,
+          metadata_json: meta ? (typeof meta === "string" ? meta : JSON.stringify(meta)) : null,
+          file_name: req.body.fileName || req.body.file_name || null,
+          created_at: req.body.createdAt || req.body.timestamp || now,
+        },
+      ];
+    }
+
+    if (recordsToInsert.length === 0) {
+      return res.status(400).json({ error: "No valid log payload provided." });
+    }
+
+    const count = insertAppLogs(recordsToInsert);
+    res.json({ success: true, count, message: `Successfully logged ${count} entries.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/apps/:slug/logs/upload
+ * Alias for client log uploads
+ */
+appsRouter.post("/:slug/logs/upload", (req: Request, res: Response) => {
+  const slug = getParam(req.params.slug).trim();
+  const app = db.prepare("SELECT * FROM _apps WHERE slug = ?").get(slug) as unknown as AppRecord | undefined;
+  if (!app) {
+    return res.status(404).json({ error: `App "${slug}" not found` });
+  }
+
+  let recordsToInsert: AppLogRecord[] = [];
+  if (req.body && req.body.rawContent && typeof req.body.rawContent === "string") {
+    recordsToInsert = parseRawLogContent(req.body.rawContent, {
+      appId: app.id,
+      appSlug: app.slug,
+      fileName: req.body.fileName,
+      deviceId: req.body.deviceId,
+      appVersion: req.body.appVersion,
+      platform: req.body.platform,
+      level: req.body.level,
+    });
+  } else if (Array.isArray(req.body?.logs)) {
+    recordsToInsert = parseRawLogContent(JSON.stringify(req.body.logs), {
+      appId: app.id,
+      appSlug: app.slug,
+      deviceId: req.body.deviceId,
+      appVersion: req.body.appVersion,
+    });
+  } else if (req.body && (req.body.message || req.body.error)) {
+    const now = new Date().toISOString();
+    const meta = req.body.metadata || req.body.meta;
+    recordsToInsert = [
+      {
+        id: `applog_${crypto.randomBytes(8).toString("hex")}`,
+        app_id: app.id,
+        app_slug: app.slug,
+        level: (req.body.level || "INFO").toString().toUpperCase(),
+        message: String(req.body.message || req.body.error),
+        stack_trace: req.body.stackTrace || req.body.stack_trace || null,
+        device_id: req.body.deviceId || null,
+        device_name: req.body.deviceName || null,
+        app_version: req.body.appVersion || null,
+        platform: req.body.platform || null,
+        user_identifier: req.body.userIdentifier || null,
+        metadata_json: meta ? (typeof meta === "string" ? meta : JSON.stringify(meta)) : null,
+        file_name: req.body.fileName || null,
+        created_at: req.body.createdAt || now,
+      },
+    ];
+  }
+
+  if (recordsToInsert.length === 0) {
+    return res.status(400).json({ error: "No valid log payload provided." });
+  }
+
+  const count = insertAppLogs(recordsToInsert);
+  res.json({ success: true, count, message: `Successfully logged ${count} entries.` });
 });

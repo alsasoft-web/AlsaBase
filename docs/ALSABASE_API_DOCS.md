@@ -781,6 +781,55 @@ Deactivates a serial key from a device, freeing up an activation slot so the lic
   }
   ```
 
+#### `POST /api/apps/:slug/logs`
+Reports client crash reports, diagnostics, error events, or log files for an application.
+
+- **Body (Single Log Entry)**:
+  ```json
+  {
+    "level": "ERROR",
+    "message": "Unhandled NullReferenceException in PaymentProcessor",
+    "stackTrace": "at PaymentProcessor.Process (line 42)\nat Main (line 12)",
+    "deviceId": "PC-HWID-8AC0-B851",
+    "deviceName": "Workstation-A",
+    "appVersion": "1.2.0",
+    "platform": "windows",
+    "metadata": {
+      "gateway": "stripe",
+      "attempt": 3
+    }
+  }
+  ```
+- **Body (Batch of Logs)**:
+  ```json
+  {
+    "logs": [
+      { "level": "INFO", "message": "App initialized", "appVersion": "1.2.0" },
+      { "level": "ERROR", "message": "Connection timeout to redis", "appVersion": "1.2.0" }
+    ]
+  }
+  ```
+- **Body (Raw File / Text Content)**:
+  ```json
+  {
+    "rawContent": "2026-11-04 12:00:00 [ERROR] Connection lost\n   at System.Net.Sockets...",
+    "fileName": "crash_dump.log",
+    "deviceId": "PC-HWID-8AC0-B851",
+    "appVersion": "1.2.0"
+  }
+  ```
+- **Response**: `200 OK`
+  ```json
+  {
+    "success": true,
+    "count": 1,
+    "message": "Successfully logged 1 entries."
+  }
+  ```
+
+#### `POST /api/apps/:slug/logs/upload`
+Alias endpoint for client log file ingestion. Accepts identical payloads to `POST /api/apps/:slug/logs`.
+
 ---
 
 ### Client Application Integration by Programming Language
@@ -1330,6 +1379,49 @@ Toggles lock status on an existing registered device (`{ "isLocked": true|false,
 
 #### `DELETE /api/apps/manage/devices/:id`
 Deletes and unbinds a device record from the registry.
+
+#### `GET /api/apps/manage/logs`
+Lists application logs with pagination, filtering by level, search keyword, device HWID, or version (Requires Superuser).
+- **Query Parameters**:
+  - `appId` or `appSlug` (string): Application identifier
+  - `page` (number, default: 1): Page number
+  - `limit` (number, default: 50, max: 200): Items per page
+  - `level` (string, optional): Filter by `FATAL`, `ERROR`, `WARN`, `INFO`, `DEBUG`
+  - `search` (string, optional): Search keyword across messages, stack traces, metadata, and device IDs
+  - `deviceId` (string, optional): Filter by client device HWID
+  - `appVersion` (string, optional): Filter by app version
+
+#### `GET /api/apps/manage/logs/stats`
+Returns aggregate statistics of logs for an application (total count, fatal, error, warn, info, debug, and unique devices reporting) (Requires Superuser).
+
+#### `POST /api/apps/manage/logs/upload`
+Uploads / imports log files (`.log`, `.txt`, `.json`), batches, or manual log records into an application (Requires Superuser).
+- **Body**:
+  ```json
+  {
+    "appId": "app_123",
+    "rawContent": "2026-11-04 14:00:00 [ERROR] Crash dump...",
+    "fileName": "client_debug.log",
+    "deviceId": "PC-HWID-8AC0-B851",
+    "appVersion": "1.2.0",
+    "level": "ERROR"
+  }
+  ```
+
+#### `POST /api/apps/manage/logs/delete-batch`
+Deletes a batch of log records by IDs or all matching filter criteria (Requires Superuser).
+- **Body**:
+  ```json
+  {
+    "ids": ["applog_abc1", "applog_abc2"]
+  }
+  ```
+
+#### `DELETE /api/apps/manage/logs/:id`
+Deletes a single log record by its ID (Requires Superuser).
+
+#### `DELETE /api/apps/manage/logs`
+Clears all logs for an application via `?appId=...` or `?appSlug=...` (Requires Superuser).
 
 ---
 

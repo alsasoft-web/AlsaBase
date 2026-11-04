@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import crypto from "node:crypto";
 import { db } from "./db";
 import { requireSuperuser } from "./auth";
 
@@ -199,6 +200,82 @@ logsRouter.post(
     return res.status(400).json({ error: "No logs specified for deletion" });
   },
 );
+
+// Upload / Import logs batch (JSON array or raw text)
+logsRouter.post("/upload", requireSuperuser, (req: Request, res: Response) => {
+  try {
+    const { logs, rawContent } = req.body;
+    let itemsToInsert: any[] = [];
+
+    if (Array.isArray(logs)) {
+      itemsToInsert = logs;
+    } else if (typeof rawContent === "string") {
+      try {
+        const parsed = JSON.parse(rawContent);
+        if (Array.isArray(parsed)) itemsToInsert = parsed;
+        else if (parsed && typeof parsed === "object") itemsToInsert = [parsed];
+      } catch {
+        const lines = rawContent.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        itemsToInsert = lines.map((line) => ({
+          level: "INFO",
+          error_message: line,
+          path: "/upload",
+        }));
+      }
+    } else if (req.body && (req.body.level || req.body.error_message || req.body.message)) {
+      itemsToInsert = [req.body];
+    }
+
+    if (itemsToInsert.length === 0) {
+      return res.status(400).json({ error: "No valid logs provided to import" });
+    }
+
+    const insertStmt = db.prepare(`
+      INSERT INTO _logs (id, timestamp, level, method, path, status, duration_ms, error_message, stack_trace, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    db.exec("BEGIN");
+    let count = 0;
+    try {
+      for (const r of itemsToInsert) {
+        const id = r.id || `log_${crypto.randomBytes(8).toString("hex")}`;
+        const timestamp = r.timestamp || new Date().toISOString();
+        const level = (r.level || "INFO").toUpperCase();
+        const method = r.method || "UPLOAD";
+        const path = r.path || "/uploaded-log";
+        const status = typeof r.status === "number" ? r.status : null;
+        const duration_ms = typeof r.duration_ms === "number" ? r.duration_ms : null;
+        const error_message = r.error_message || r.message || null;
+        const stack_trace = r.stack_trace || r.stackTrace || null;
+        const metadata_json =
+          r.metadata_json || (r.metadata ? JSON.stringify(r.metadata) : null);
+
+        insertStmt.run(
+          id,
+          timestamp,
+          level,
+          method,
+          path,
+          status,
+          duration_ms,
+          error_message,
+          stack_trace,
+          metadata_json
+        );
+        count++;
+      }
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+
+    res.json({ success: true, count, message: `Successfully imported ${count} log records` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Clear all logs
 logsRouter.delete("/", requireSuperuser, (_req: Request, res: Response) => {

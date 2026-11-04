@@ -11,6 +11,9 @@ import type {
   AppLicenseValidateResult,
   AppLicenseActivateResult,
   AppDeviceCheckResult,
+  AppLogModel,
+  AppLogUploadPayload,
+  AppLogStatsResult,
   CommonOptions,
   HwidOptions,
 } from "../types";
@@ -566,6 +569,231 @@ export class AppsService extends BaseService {
       `/api/apps/manage/devices/${encodeURIComponent(id)}`,
       {
         method: "DELETE",
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+    return !!res.success;
+  }
+
+  // ============================================================================
+  // App Logs & Crash Reporting Methods
+  // ============================================================================
+
+  /**
+   * Upload or report a client log / error / crash report for an application.
+   *
+   * @param appSlug Unique slug identifier of the app
+   * @param payload Log data (level, message, stackTrace, deviceId, metadata, etc.)
+   */
+  async uploadLog(
+    appSlug: string,
+    payload: AppLogUploadPayload,
+    options?: CommonOptions
+  ): Promise<{ success: boolean; count: number }> {
+    return this.send<{ success: boolean; count: number }>(
+      `/api/apps/${encodeURIComponent(appSlug)}/logs`,
+      {
+        method: "POST",
+        body: payload,
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+  }
+
+  /**
+   * Batch upload multiple client logs or event telemetry for an application.
+   *
+   * @param appSlug Unique slug identifier of the app
+   * @param logs Array of log payloads
+   */
+  async uploadLogs(
+    appSlug: string,
+    logs: AppLogUploadPayload[],
+    options?: CommonOptions
+  ): Promise<{ success: boolean; count: number }> {
+    return this.send<{ success: boolean; count: number }>(
+      `/api/apps/${encodeURIComponent(appSlug)}/logs`,
+      {
+        method: "POST",
+        body: { logs },
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+  }
+
+  /**
+   * Upload raw text or a log file string (.log, .txt, or JSON) for an application.
+   *
+   * @param appSlug Unique slug identifier of the app
+   * @param rawContent Plain text or serialized JSON log content
+   * @param fileOptions Optional file metadata (fileName, deviceId, appVersion, level)
+   */
+  async uploadLogFile(
+    appSlug: string,
+    rawContent: string,
+    fileOptions?: {
+      fileName?: string;
+      deviceId?: string;
+      appVersion?: string;
+      level?: string;
+    },
+    options?: CommonOptions
+  ): Promise<{ success: boolean; count: number }> {
+    return this.send<{ success: boolean; count: number }>(
+      `/api/apps/${encodeURIComponent(appSlug)}/logs/upload`,
+      {
+        method: "POST",
+        body: {
+          rawContent,
+          ...fileOptions,
+        },
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+  }
+
+  /**
+   * List logs for an application with pagination and filtering (Requires Superuser).
+   *
+   * @param appIdOrSlug Unique ID or slug of the application
+   * @param query Optional filters (page, limit, level, search, deviceId, appVersion)
+   */
+  async manageListLogs(
+    appIdOrSlug: string,
+    query?: {
+      page?: number;
+      limit?: number;
+      level?: string;
+      search?: string;
+      deviceId?: string;
+      appVersion?: string;
+    },
+    options?: CommonOptions
+  ): Promise<{
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    items: AppLogModel[];
+  }> {
+    return this.send<{
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      items: AppLogModel[];
+    }>("/api/apps/manage/logs", {
+      method: "GET",
+      query: { appId: appIdOrSlug, ...query },
+      headers: options?.headers,
+      requestKey: options?.requestKey,
+    });
+  }
+
+  /**
+   * Retrieve aggregate log statistics for an application (Requires Superuser).
+   *
+   * @param appIdOrSlug Unique ID or slug of the application
+   */
+  async manageGetLogStats(
+    appIdOrSlug: string,
+    options?: CommonOptions
+  ): Promise<AppLogStatsResult> {
+    return this.send<AppLogStatsResult>("/api/apps/manage/logs/stats", {
+      method: "GET",
+      query: { appId: appIdOrSlug },
+      headers: options?.headers,
+      requestKey: options?.requestKey,
+    });
+  }
+
+  /**
+   * Upload / import logs into an application as an administrator (Requires Superuser).
+   * Supports raw text (.log/.txt), JSON arrays, or single log records.
+   */
+  async manageUploadLogs(
+    payload: {
+      appId?: string;
+      appSlug?: string;
+      logs?: AppLogUploadPayload[];
+      log?: AppLogUploadPayload;
+      rawContent?: string;
+      fileName?: string;
+      deviceId?: string;
+      deviceName?: string;
+      appVersion?: string;
+      platform?: string;
+      level?: string;
+    },
+    options?: CommonOptions
+  ): Promise<{ success: boolean; count: number; message: string }> {
+    return this.send<{ success: boolean; count: number; message: string }>(
+      "/api/apps/manage/logs/upload",
+      {
+        method: "POST",
+        body: payload,
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+  }
+
+  /**
+   * Batch delete logs for an application (Requires Superuser).
+   */
+  async manageDeleteLogsBatch(
+    payload: {
+      ids?: string[];
+      all?: boolean;
+      appId?: string;
+      appSlug?: string;
+      level?: string;
+      search?: string;
+    },
+    options?: CommonOptions
+  ): Promise<{ success: boolean; count: number }> {
+    return this.send<{ success: boolean; count: number }>(
+      "/api/apps/manage/logs/delete-batch",
+      {
+        method: "POST",
+        body: payload,
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+  }
+
+  /**
+   * Delete an individual log entry by ID (Requires Superuser).
+   */
+  async manageDeleteLog(id: string, options?: CommonOptions): Promise<boolean> {
+    const res = await this.send<{ success: boolean }>(
+      `/api/apps/manage/logs/${encodeURIComponent(id)}`,
+      {
+        method: "DELETE",
+        headers: options?.headers,
+        requestKey: options?.requestKey,
+      }
+    );
+    return !!res.success;
+  }
+
+  /**
+   * Clear all logs for an application (Requires Superuser).
+   */
+  async manageClearLogs(
+    appIdOrSlug: string,
+    options?: CommonOptions
+  ): Promise<boolean> {
+    const res = await this.send<{ success: boolean; count: number }>(
+      "/api/apps/manage/logs",
+      {
+        method: "DELETE",
+        query: { appId: appIdOrSlug },
         headers: options?.headers,
         requestKey: options?.requestKey,
       }

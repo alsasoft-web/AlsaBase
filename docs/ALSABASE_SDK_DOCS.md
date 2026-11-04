@@ -769,6 +769,47 @@ const batch = await ab.apps.manageCreateLicenses({
 });
 console.log(`Generated ${batch.createdCount} licenses`);
 
+### App Logs & Crash Reporting
+
+Applications can report errors, exceptions, diagnostic events, or full log files directly to AlsaBase:
+
+```typescript
+// 1. Report a single log or crash event
+await ab.apps.uploadLog("desktop-app", {
+  level: "ERROR",
+  message: "Unhandled NullReferenceException in PaymentProcessor",
+  stackTrace: error.stack,
+  deviceId: await ab.apps.getHwid(),
+  appVersion: "1.2.0",
+  platform: "windows",
+  metadata: { userId: "usr_123", feature: "checkout" },
+});
+
+// 2. Batch upload multiple telemetry logs
+await ab.apps.uploadLogs("desktop-app", [
+  { level: "INFO", message: "Application launched", appVersion: "1.2.0" },
+  { level: "WARN", message: "High latency detected (450ms)", appVersion: "1.2.0" },
+]);
+
+// 3. Upload a raw log file string (.log, .txt, .json)
+await ab.apps.uploadLogFile("desktop-app", fileTextContent, {
+  fileName: "debug_session.log",
+  deviceId: await ab.apps.getHwid(),
+  appVersion: "1.2.0",
+});
+
+// 4. Superuser: Query and manage application logs
+const logs = await ab.apps.manageListLogs("desktop-app", {
+  page: 1,
+  limit: 50,
+  level: "ERROR",
+  search: "PaymentProcessor",
+});
+
+const stats = await ab.apps.manageGetLogStats("desktop-app");
+console.log(`Total logs: ${stats.total}, Errors: ${stats.error}, Devices: ${stats.uniqueDevices}`);
+```
+
 ### End-to-End Desktop / Client App Lifecycle Flow
 
 Here is the complete production workflow for desktop applications (Tauri, Electron, React Native, or Node.js) combining device lock checks, auto-updates, and serial key licensing:
