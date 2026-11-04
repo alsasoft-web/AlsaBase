@@ -3413,7 +3413,7 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                     data={[
                       {
                         label: (
-                          <Group gap={4}>
+                          <Group gap={4} wrap="nowrap">
                             <IconList size={13} />
                             <span>Fields</span>
                           </Group>
@@ -3422,7 +3422,7 @@ cronAdd("daily_summary", "0 0 * * *", () => {
                       },
                       {
                         label: (
-                          <Group gap={4}>
+                          <Group gap={4} wrap="nowrap">
                             <IconBraces size={13} />
                             <span>JSON</span>
                           </Group>

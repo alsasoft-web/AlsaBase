@@ -222,7 +222,7 @@ export const NpmPackagesModal: React.FC<NpmPackagesModalProps> = ({
             </ActionIcon>
           </Group>
 
-          <ScrollArea style={{ maxHeight: 200 }} scrollbarSize={4}>
+          <ScrollArea h={200} scrollbarSize={4}>
             <Table highlightOnHover style={{ backgroundColor: '#18181b', borderRadius: 6, fontSize: '13px' }}>
               <Table.Thead style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
                 <Table.Tr>

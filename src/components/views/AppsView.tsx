@@ -26,6 +26,8 @@ import {
   Divider,
   Avatar,
 } from "@mantine/core";
+import { getModuleSnippet } from "./apps/appDocsSnippets";
+import { AppDocsPanel } from "./apps/AppDocsPanel";
 import { notifications } from "@mantine/notifications";
 import {
   IconRocket,
@@ -54,7 +56,6 @@ import {
   IconBrandRust,
   IconBrandCSharp,
   IconBrandJavascript,
-  IconShieldCheck,
 } from "@tabler/icons-react";
 import {
   api,
@@ -155,373 +156,13 @@ export const AppsView: React.FC = () => {
   const [simulating, setSimulating] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
 
-  // Documentation & Code Examples
-  const [docLanguage, setDocLanguage] = useState<string>("sdk");
-  const [copiedDocCode, setCopiedDocCode] = useState(false);
+  // Documentation & Modular Code Examples
+  const [docLanguage, setDocLanguage] = useState<string>("csharp");
 
   const getDocCodeSnippet = (lang: string, appSlug: string, origin: string) => {
-    switch (lang) {
-      case "sdk":
-        return `import AlsaBase from "alsabase";
-
-const ab = new AlsaBase("${origin}");
-
-// 1. Device Gatekeeper Check: Ensure this machine is not locked / banned
-const deviceCheck = await ab.apps.checkDevice("${appSlug}", "PC-HWID-98234");
-if (deviceCheck.isLocked) {
-  throw new Error("This computer is locked: " + (deviceCheck.lockReason || "Access prohibited"));
-}
-
-// 2. Check for App Updates (Pass deviceId to enforce device policy during update checks)
-const update = await ab.apps.checkUpdate("${appSlug}", {
-  currentVersion: "1.0.0",
-  platform: "windows",
-  deviceId: "PC-HWID-98234",
-});
-
-if (update.hasUpdate) {
-  console.log("New version available:", update.latestVersion);
-  if (update.isAutomatic) {
-    // Mandatory update: download and force restart
-    console.log("Mandatory update required! Download URL:", update.downloadUrl);
-  } else {
-    // Optional update: prompt user with update notes
-    console.log("Optional update notes:", update.releaseNotes);
-  }
-}
-
-// 3. Activate a Serial Number on this Machine
-const activation = await ab.apps.activateLicense("${appSlug}", {
-  key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234",
-  deviceName: "Office-PC-1",
-  platform: "windows",
-});
-console.log("License Status:", activation.license.status);
-console.log("Seats Used:", activation.license.activatedCount, "/", activation.license.maxActivations);
-
-// 4. Validate License on Subsequent App Launches
-const validation = await ab.apps.validateLicense("${appSlug}", {
-  key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234",
-});
-if (!validation.valid) {
-  console.error("License is invalid or expired:", validation.error);
-}
-
-// 5. Deactivate License from this PC (Frees seat for another machine)
-await ab.apps.deactivateLicense("${appSlug}", {
-  key: "XXXX-XXXX-XXXX-XXXX",
-  deviceId: "PC-HWID-98234",
-});`;
-
-      case "csharp":
-        return `using System;
-using System.Net.Http;
-using System.Net.Http.Json;
-using System.Text.Json;
-using System.Threading.Tasks;
-using Microsoft.Win32;
-
-public class AlsaBaseLicensingClient
-{
-    private readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-    private readonly string _baseUrl = "${origin}";
-    private readonly string _appSlug = "${appSlug}";
-
-    // 1. Read persistent Windows Hardware ID (MachineGuid)
-    public static string GetHardwareId()
-    {
-        try
-        {
-            using var key = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64)
-                                       .OpenSubKey(@"SOFTWARE\\Microsoft\\Cryptography");
-            var guid = key?.GetValue("MachineGuid")?.ToString();
-            if (!string.IsNullOrEmpty(guid)) return guid;
-        }
-        catch { }
-        return Environment.MachineName;
-    }
-
-    // 2. Check if PC is allowed or locked
-    public async Task<bool> IsDevicePermittedAsync(string deviceId)
-    {
-        var url = $"{_baseUrl}/api/apps/{_appSlug}/devices/check?deviceId={Uri.EscapeDataString(deviceId)}";
-        var res = await _http.GetAsync(url);
-        if (!res.IsSuccessStatusCode) return false;
-
-        using var doc = await JsonDocument.ParseAsync(await res.Content.ReadAsStreamAsync());
-        return doc.RootElement.GetProperty("allowed").GetBoolean();
-    }
-
-    // 3. Check for application update
-    public async Task<JsonElement> CheckUpdateAsync(string currentVersion, string deviceId)
-    {
-        var url = $"{_baseUrl}/api/apps/{_appSlug}/check-update?currentVersion={currentVersion}&platform=windows&deviceId={Uri.EscapeDataString(deviceId)}";
-        return await _http.GetFromJsonAsync<JsonElement>(url);
-    }
-
-    // 4. Activate serial key on this device
-    public async Task<bool> ActivateLicenseAsync(string serialKey, string deviceId)
-    {
-        var payload = new
-        {
-            key = serialKey.Trim().ToUpper(),
-            deviceId = deviceId,
-            deviceName = Environment.MachineName,
-            osName = Environment.OSVersion.ToString(),
-            platform = "windows"
-        };
-        var url = $"{_baseUrl}/api/apps/{_appSlug}/licenses/activate";
-        var res = await _http.PostAsJsonAsync(url, payload);
-        return res.IsSuccessStatusCode;
-    }
-
-    // 5. Validate existing serial key on startup
-    public async Task<bool> ValidateLicenseAsync(string serialKey, string deviceId)
-    {
-        var payload = new { key = serialKey.Trim().ToUpper(), deviceId = deviceId };
-        var url = $"{_baseUrl}/api/apps/{_appSlug}/licenses/validate";
-        var res = await _http.PostAsJsonAsync(url, payload);
-        if (!res.IsSuccessStatusCode) return false;
-
-        using var doc = await JsonDocument.ParseAsync(await res.Content.ReadAsStreamAsync());
-        return doc.RootElement.TryGetProperty("valid", out var valid) && valid.GetBoolean();
-    }
-
-    // 6. Deactivate serial key from this PC (transfers seat)
-    public async Task<bool> DeactivateLicenseAsync(string serialKey, string deviceId)
-    {
-        var payload = new { key = serialKey.Trim().ToUpper(), deviceId = deviceId };
-        var url = $"{_baseUrl}/api/apps/{_appSlug}/licenses/deactivate";
-        var res = await _http.PostAsJsonAsync(url, payload);
-        return res.IsSuccessStatusCode;
-    }
-}`;
-
-      case "rust":
-        return `use serde::{Deserialize, Serialize};
-use std::error::Error;
-
-#[derive(Serialize)]
-struct ActivateRequest<'a> {
-    key: &'a str,
-    #[serde(rename = "deviceId")]
-    device_id: &'a str,
-    #[serde(rename = "deviceName")]
-    device_name: &'a str,
-    platform: &'a str,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct ValidateResponse {
-    pub valid: bool,
-    #[serde(rename = "isLocked")]
-    pub is_locked: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct UpdateResponse {
-    #[serde(rename = "updateAvailable")]
-    pub update_available: bool,
-    #[serde(rename = "latestVersion")]
-    pub latest_version: Option<String>,
-    #[serde(rename = "downloadUrl")]
-    pub download_url: Option<String>,
-    #[serde(rename = "isAutomatic")]
-    pub is_automatic: bool,
-}
-
-pub struct AlsaBaseAppClient {
-    base_url: String,
-    app_slug: String,
-    client: reqwest::Client,
-}
-
-impl AlsaBaseAppClient {
-    pub fn new() -> Self {
-        Self {
-            base_url: "${origin}".to_string(),
-            app_slug: "${appSlug}".to_string(),
-            client: reqwest::Client::new(),
-        }
-    }
-
-    // Check updates
-    pub async fn check_update(&self, current_ver: &str, device_id: &str) -> Result<UpdateResponse, Box<dyn Error>> {
-        let url = format!(
-            "{}/api/apps/{}/check-update?currentVersion={}&platform=windows&deviceId={}",
-            self.base_url, self.app_slug, current_ver, device_id
-        );
-        let res = self.client.get(&url).send().await?.json::<UpdateResponse>().await?;
-        Ok(res)
-    }
-
-    // Activate serial key
-    pub async fn activate_license(&self, key: &str, device_id: &str, device_name: &str) -> Result<bool, Box<dyn Error>> {
-        let url = format!("{}/api/apps/{}/licenses/activate", self.base_url, self.app_slug);
-        let payload = ActivateRequest { key, device_id, device_name, platform: "windows" };
-        let res = self.client.post(&url).json(&payload).send().await?;
-        Ok(res.status().is_success())
-    }
-
-    // Validate license on startup
-    pub async fn validate_license(&self, key: &str, device_id: &str) -> Result<ValidateResponse, Box<dyn Error>> {
-        let url = format!("{}/api/apps/{}/licenses/validate", self.base_url, self.app_slug);
-        let body = serde_json::json!({ "key": key, "deviceId": device_id });
-        let res = self.client.post(&url).json(&body).send().await?.json::<ValidateResponse>().await?;
-        Ok(res)
-    }
-
-    // Deactivate license
-    pub async fn deactivate_license(&self, key: &str, device_id: &str) -> Result<bool, Box<dyn Error>> {
-        let url = format!("{}/api/apps/{}/licenses/deactivate", self.base_url, self.app_slug);
-        let body = serde_json::json!({ "key": key, "deviceId": device_id });
-        let res = self.client.post(&url).json(&body).send().await?;
-        Ok(res.status().is_success())
-    }
-}`;
-
-      case "python":
-        return `import platform
-import uuid
-import requests
-
-class AlsaBaseAppClient:
-    def __init__(self):
-        self.base_url = "${origin}"
-        self.app_slug = "${appSlug}"
-        self.session = requests.Session()
-
-    @staticmethod
-    def get_hardware_id() -> str:
-        """Returns stable hardware MAC-based node identifier."""
-        return f"PC-{uuid.getnode():012x}"
-
-    def check_device(self, device_id: str) -> dict:
-        """Check if PC is permitted or locked."""
-        url = f"{self.base_url}/api/apps/{self.app_slug}/devices/check"
-        return self.session.get(url, params={"deviceId": device_id}, timeout=10).json()
-
-    def check_update(self, current_version: str, device_id: str) -> dict:
-        """Query for new releases and mandatory upgrade requirements."""
-        url = f"{self.base_url}/api/apps/{self.app_slug}/check-update"
-        return self.session.get(url, params={
-            "currentVersion": current_version,
-            "platform": "windows",
-            "deviceId": device_id
-        }, timeout=10).json()
-
-    def activate_license(self, serial_key: str, device_id: str) -> dict:
-        """Bind serial key to this PC machine."""
-        url = f"{self.base_url}/api/apps/{self.app_slug}/licenses/activate"
-        payload = {
-            "key": serial_key.strip().upper(),
-            "deviceId": device_id,
-            "deviceName": platform.node(),
-            "osName": f"{platform.system()} {platform.release()}",
-            "platform": platform.system().lower()
-        }
-        resp = self.session.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-
-    def validate_license(self, serial_key: str, device_id: str) -> dict:
-        """Validate license validity on application launch."""
-        url = f"{self.base_url}/api/apps/{self.app_slug}/licenses/validate"
-        return self.session.post(url, json={"key": serial_key, "deviceId": device_id}, timeout=10).json()
-
-    def deactivate_license(self, serial_key: str, device_id: str) -> bool:
-        """Release activation slot on uninstallation or license transfer."""
-        url = f"{self.base_url}/api/apps/{self.app_slug}/licenses/deactivate"
-        resp = self.session.post(url, json={"key": serial_key, "deviceId": device_id}, timeout=10)
-        return resp.status_code == 200`;
-
-      case "fetch":
-        return `const BASE_URL = "${origin}";
-const APP_SLUG = "${appSlug}";
-
-// 1. Check if device is banned or locked
-async function checkDevice(deviceId) {
-  const res = await fetch(\`\${BASE_URL}/api/apps/\${APP_SLUG}/devices/check?deviceId=\${encodeURIComponent(deviceId)}\`);
-  return res.json();
-}
-
-// 2. Check for application update
-async function checkUpdate(currentVersion, deviceId) {
-  const params = new URLSearchParams({ currentVersion, platform: "windows" });
-  if (deviceId) params.set("deviceId", deviceId);
-  const res = await fetch(\`\${BASE_URL}/api/apps/\${APP_SLUG}/check-update?\${params.toString()}\`);
-  return res.json();
-}
-
-// 3. Activate a serial number
-async function activateLicense(key, deviceId, deviceName = "My-PC") {
-  const res = await fetch(\`\${BASE_URL}/api/apps/\${APP_SLUG}/licenses/activate\`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      key: key.trim().toUpperCase(),
-      deviceId,
-      deviceName,
-      platform: "windows"
-    })
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || "Activation failed");
-  }
-  return res.json();
-}
-
-// 4. Validate license on startup
-async function validateLicense(key, deviceId) {
-  const res = await fetch(\`\${BASE_URL}/api/apps/\${APP_SLUG}/licenses/validate\`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, deviceId })
-  });
-  return res.json();
-}
-
-// 5. Deactivate license from current PC
-async function deactivateLicense(key, deviceId) {
-  const res = await fetch(\`\${BASE_URL}/api/apps/\${APP_SLUG}/licenses/deactivate\`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, deviceId })
-  });
-  return res.json();
-}`;
-
-      case "endpoints":
-      default:
-        return `# 1. Check if PC hardware is allowed or banned
-curl "${origin}/api/apps/${appSlug}/devices/check?deviceId=PC-HWID-98234"
-
-# 2. Check for application update
-curl "${origin}/api/apps/${appSlug}/check-update?currentVersion=1.0.0&platform=windows&deviceId=PC-HWID-98234"
-
-# 3. Activate a serial key on this device
-curl -X POST "${origin}/api/apps/${appSlug}/licenses/activate" \\
-  -H "Content-Type: application/json" \\
-  -d '{"key":"XXXX-XXXX-XXXX-XXXX","deviceId":"PC-HWID-98234","deviceName":"Office-PC","platform":"windows"}'
-
-# 4. Validate serial key on application launch
-curl -X POST "${origin}/api/apps/${appSlug}/licenses/validate" \\
-  -H "Content-Type: application/json" \\
-  -d '{"key":"XXXX-XXXX-XXXX-XXXX","deviceId":"PC-HWID-98234"}'
-
-# 5. Deactivate serial key from this PC (free up seat)
-curl -X POST "${origin}/api/apps/${appSlug}/licenses/deactivate" \\
-  -H "Content-Type: application/json" \\
-  -d '{"key":"XXXX-XXXX-XXXX-XXXX","deviceId":"PC-HWID-98234"}'
-
-# 6. Direct binary download URL (increments download counter)
-curl -O "${origin}/api/apps/${appSlug}/versions/1.0.0/download"`;
-    }
+    return getModuleSnippet("lifecycle", lang, appSlug, origin);
   };
+
 
   // Load Apps
   const loadApps = async (preserveSelectedId?: string) => {
@@ -2921,339 +2562,17 @@ curl -O "${origin}/api/apps/${appSlug}/versions/1.0.0/download"`;
                   backgroundColor: "var(--color-bg-canvas)",
                 }}
               >
-                <Stack gap="xl" style={{ maxWidth: 1100, width: "100%", margin: "0 auto" }}>
-                  {/* Top Lifecycle Overview Banner */}
-                  <Paper
-                    p={isMobile ? "md" : "lg"}
-                    radius="md"
-                    style={{
-                      backgroundColor: "var(--color-bg-card)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  >
-                    <Group justify="space-between" align="flex-start" wrap="wrap" gap="md" mb="md">
-                      <Box style={{ flex: 1, minWidth: 260 }}>
-                        <Group gap="xs" mb={4}>
-                          <IconShieldCheck size={22} color="var(--color-neon-primary, #10e57a)" />
-                          <Title order={4} fw={700}>
-                            Client Integration Lifecycle for &quot;{selectedApp.name}&quot;
-                          </Title>
-                        </Group>
-                        <Text size="xs" c="dimmed">
-                          Follow these standard phases when building desktop (Tauri / Electron / WPF), mobile, or CLI client applications connected to AlsaBase.
-                        </Text>
-                      </Box>
-                      <Button
-                        size="xs"
-                        variant="light"
-                        color="blue"
-                        leftSection={<IconPlayerPlay size={14} />}
-                        onClick={() => {
-                          setSimCurrentVersion(selectedApp.latestVersion || "1.0.0");
-                          setSimResult(null);
-                          setIsSimulatorOpen(true);
-                        }}
-                      >
-                        Open Live Test Simulator
-                      </Button>
-                    </Group>
-
-                    <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
-                      <Paper p="sm" radius="sm" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--color-border)" }}>
-                        <Group gap="xs" mb={4}>
-                          <Badge size="xs" color="teal" variant="filled">Phase 1</Badge>
-                          <Text size="xs" fw={700}>Hardware ID (HWID)</Text>
-                        </Group>
-                        <Text size="11px" c="dimmed">
-                          Extract a persistent hardware GUID (e.g. Windows Registry <Code>MachineGuid</Code> or MAC node hash) to uniquely fingerprint the machine.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="sm" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--color-border)" }}>
-                        <Group gap="xs" mb={4}>
-                          <Badge size="xs" color="blue" variant="filled">Phase 2</Badge>
-                          <Text size="xs" fw={700}>Gatekeeper Check</Text>
-                        </Group>
-                        <Text size="11px" c="dimmed">
-                          Call <Code>GET /devices/check</Code> on boot. If the computer is banned or quota exceeded, show the lock reason and terminate launch.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="sm" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--color-border)" }}>
-                        <Group gap="xs" mb={4}>
-                          <Badge size="xs" color="orange" variant="filled">Phase 3</Badge>
-                          <Text size="xs" fw={700}>Auto-Update Check</Text>
-                        </Group>
-                        <Text size="11px" c="dimmed">
-                          Call <Code>GET /check-update</Code>. If <Code>isAutomatic: true</Code>, force mandatory upgrade before allowing app usage.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="sm" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--color-border)" }}>
-                        <Group gap="xs" mb={4}>
-                          <Badge size="xs" color="violet" variant="filled">Phase 4</Badge>
-                          <Text size="xs" fw={700}>License Activation</Text>
-                        </Group>
-                        <Text size="11px" c="dimmed">
-                          If no key exists, prompt user to enter serial key and call <Code>POST /licenses/activate</Code> to bind the key to this HWID.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="sm" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--color-border)" }}>
-                        <Group gap="xs" mb={4}>
-                          <Badge size="xs" color="indigo" variant="filled">Phase 5</Badge>
-                          <Text size="xs" fw={700}>Daily Validation</Text>
-                        </Group>
-                        <Text size="11px" c="dimmed">
-                          On subsequent launches, verify key with <Code>POST /licenses/validate</Code>. Cache timestamp for offline grace period (e.g. 7 days).
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="sm" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid var(--color-border)" }}>
-                        <Group gap="xs" mb={4}>
-                          <Badge size="xs" color="gray" variant="filled">Phase 6</Badge>
-                          <Text size="xs" fw={700}>Seat Transfer</Text>
-                        </Group>
-                        <Text size="11px" c="dimmed">
-                          Provide a &quot;Deactivate License&quot; option in Settings calling <Code>POST /licenses/deactivate</Code> to free the seat for another PC.
-                        </Text>
-                      </Paper>
-                    </SimpleGrid>
-                  </Paper>
-
-                  {/* Multi-Language Code Snippet Generator */}
-                  <Paper
-                    p={isMobile ? "md" : "lg"}
-                    radius="md"
-                    style={{
-                      backgroundColor: "var(--color-bg-card)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  >
-                    <Group justify="space-between" align="center" mb="md" wrap="wrap" gap="sm">
-                      <Box>
-                        <Title order={5} fw={700}>
-                          Ready-to-Use Client Code Examples
-                        </Title>
-                        <Text size="xs" c="dimmed">
-                          Preconfigured for <Code>{selectedApp.slug}</Code> connecting to <Code>{window.location.origin}</Code>
-                        </Text>
-                      </Box>
-
-                      <Button
-                        size="xs"
-                        variant={copiedDocCode ? "filled" : "light"}
-                        color={copiedDocCode ? "teal" : "blue"}
-                        leftSection={copiedDocCode ? <IconCheck size={14} /> : <IconCopy size={14} />}
-                        onClick={() => {
-                          const code = getDocCodeSnippet(docLanguage, selectedApp.slug, window.location.origin);
-                          copyToClipboard(code, `${docLanguage.toUpperCase()} sample`);
-                          setCopiedDocCode(true);
-                          setTimeout(() => setCopiedDocCode(false), 2000);
-                        }}
-                      >
-                        {copiedDocCode ? "Copied to Clipboard" : "Copy Complete Code"}
-                      </Button>
-                    </Group>
-
-                    {/* Language Switcher Tabs */}
-                    <SegmentedControl
-                      value={docLanguage}
-                      onChange={(val) => setDocLanguage(val)}
-                      fullWidth={isMobile}
-                      data={[
-                        {
-                          value: "sdk",
-                          label: (
-                            <Group gap={6} justify="center">
-                              <IconBrandJavascript size={15} color="#e0af68" />
-                              <Text size="xs" fw={600}>TypeScript SDK</Text>
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: "csharp",
-                          label: (
-                            <Group gap={6} justify="center">
-                              <IconBrandCSharp size={15} color="#9d7cd8" />
-                              <Text size="xs" fw={600}>C# (.NET / WPF)</Text>
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: "rust",
-                          label: (
-                            <Group gap={6} justify="center">
-                              <IconBrandRust size={15} color="#ff9e64" />
-                              <Text size="xs" fw={600}>Rust (Tauri)</Text>
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: "python",
-                          label: (
-                            <Group gap={6} justify="center">
-                              <IconBrandPython size={15} color="#7aa2f7" />
-                              <Text size="xs" fw={600}>Python</Text>
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: "fetch",
-                          label: (
-                            <Group gap={6} justify="center">
-                              <IconCode size={15} color="#2ac3de" />
-                              <Text size="xs" fw={600}>JS (Fetch)</Text>
-                            </Group>
-                          ),
-                        },
-                        {
-                          value: "endpoints",
-                          label: (
-                            <Group gap={6} justify="center">
-                              <IconTerminal2 size={15} color="#73daca" />
-                              <Text size="xs" fw={600}>cURL / REST</Text>
-                            </Group>
-                          ),
-                        },
-                      ]}
-                      mb="md"
-                    />
-
-                    {/* Code Display Area */}
-                    <Box style={{ position: "relative" }}>
-                      <ScrollArea style={{ maxHeight: 520 }} type="auto" offsetScrollbars>
-                        <Code
-                          block
-                          style={{
-                            fontSize: "12px",
-                            lineHeight: 1.6,
-                            padding: 16,
-                            borderRadius: 8,
-                            backgroundColor: "rgba(0,0,0,0.4)",
-                            border: "1px solid rgba(255,255,255,0.06)",
-                            fontFamily: "var(--font-mono, Consolas, Monaco, monospace)",
-                            whiteSpace: "pre",
-                          }}
-                        >
-                          {getDocCodeSnippet(docLanguage, selectedApp.slug, window.location.origin)}
-                        </Code>
-                      </ScrollArea>
-                    </Box>
-                  </Paper>
-
-                  {/* REST API Endpoints Quick Reference */}
-                  <Paper
-                    p={isMobile ? "md" : "lg"}
-                    radius="md"
-                    style={{
-                      backgroundColor: "var(--color-bg-card)",
-                      border: "1px solid var(--color-border)",
-                    }}
-                  >
-                    <Group gap="xs" mb="sm">
-                      <IconTerminal2 size={20} color="var(--color-neon-primary, #10e57a)" />
-                      <Title order={5} fw={700}>
-                        REST API Reference for &quot;{selectedApp.slug}&quot;
-                      </Title>
-                    </Group>
-                    <Text size="xs" c="dimmed" mb="md">
-                      These public endpoints require no administrator tokens and are meant to be called directly by your desktop / client applications:
-                    </Text>
-
-                    <Stack gap="sm">
-                      <Paper p="sm" radius="md" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--color-border)" }}>
-                        <Group justify="space-between" align="center" wrap="wrap">
-                          <Group gap="xs">
-                            <Badge color="blue" variant="filled" size="sm">GET</Badge>
-                            <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                              /api/apps/{selectedApp.slug}/devices/check
-                            </Text>
-                          </Group>
-                          <Badge color="gray" variant="light" size="xs">Public / Client</Badge>
-                        </Group>
-                        <Text size="11px" c="dimmed" mt={4}>
-                          Query params: <Code>?deviceId=PC-HWID-98234</Code>. Returns <Code>{`{ allowed: boolean, isLocked: boolean, lockReason?: string }`}</Code>.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="md" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--color-border)" }}>
-                        <Group justify="space-between" align="center" wrap="wrap">
-                          <Group gap="xs">
-                            <Badge color="blue" variant="filled" size="sm">GET</Badge>
-                            <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                              /api/apps/{selectedApp.slug}/check-update
-                            </Text>
-                          </Group>
-                          <Badge color="gray" variant="light" size="xs">Public / Client</Badge>
-                        </Group>
-                        <Text size="11px" c="dimmed" mt={4}>
-                          Query params: <Code>?currentVersion=1.0.0&platform=windows&channel=stable&deviceId=PC-HWID</Code>. Compares semver against eligible releases.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="md" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--color-border)" }}>
-                        <Group justify="space-between" align="center" wrap="wrap">
-                          <Group gap="xs">
-                            <Badge color="teal" variant="filled" size="sm">POST</Badge>
-                            <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                              /api/apps/{selectedApp.slug}/licenses/activate
-                            </Text>
-                          </Group>
-                          <Badge color="gray" variant="light" size="xs">Public / Client</Badge>
-                        </Group>
-                        <Text size="11px" c="dimmed" mt={4}>
-                          Body: <Code>{`{ key: string, deviceId: string, deviceName?: string, osName?: string, platform?: string }`}</Code>. Binds key to device up to maximum activation seats.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="md" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--color-border)" }}>
-                        <Group justify="space-between" align="center" wrap="wrap">
-                          <Group gap="xs">
-                            <Badge color="teal" variant="filled" size="sm">POST</Badge>
-                            <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                              /api/apps/{selectedApp.slug}/licenses/validate
-                            </Text>
-                          </Group>
-                          <Badge color="gray" variant="light" size="xs">Public / Client</Badge>
-                        </Group>
-                        <Text size="11px" c="dimmed" mt={4}>
-                          Body: <Code>{`{ key: string, deviceId: string }`}</Code>. Validates that the license is active, unexpired, and device seat is registered.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="md" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--color-border)" }}>
-                        <Group justify="space-between" align="center" wrap="wrap">
-                          <Group gap="xs">
-                            <Badge color="teal" variant="filled" size="sm">POST</Badge>
-                            <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                              /api/apps/{selectedApp.slug}/licenses/deactivate
-                            </Text>
-                          </Group>
-                          <Badge color="gray" variant="light" size="xs">Public / Client</Badge>
-                        </Group>
-                        <Text size="11px" c="dimmed" mt={4}>
-                          Body: <Code>{`{ key: string, deviceId: string }`}</Code>. Unbinds the machine from the serial key, releasing an activation slot.
-                        </Text>
-                      </Paper>
-
-                      <Paper p="sm" radius="md" style={{ backgroundColor: "rgba(255,255,255,0.02)", border: "1px solid var(--color-border)" }}>
-                        <Group justify="space-between" align="center" wrap="wrap">
-                          <Group gap="xs">
-                            <Badge color="blue" variant="filled" size="sm">GET</Badge>
-                            <Text size="xs" fw={700} style={{ fontFamily: "var(--font-mono)" }}>
-                              /api/apps/{selectedApp.slug}/versions/:version/download
-                            </Text>
-                          </Group>
-                          <Badge color="gray" variant="light" size="xs">Direct Binary Download</Badge>
-                        </Group>
-                        <Text size="11px" c="dimmed" mt={4}>
-                          Direct binary download endpoint. Automatically tracks download counts and serves the release file installer with proper headers.
-                        </Text>
-                      </Paper>
-                    </Stack>
-                  </Paper>
-                </Stack>
+                <AppDocsPanel
+                  selectedApp={selectedApp}
+                  docLanguage={docLanguage}
+                  setDocLanguage={setDocLanguage}
+                  isMobile={Boolean(isMobile)}
+                  onOpenSimulator={() => {
+                    setSimCurrentVersion(selectedApp.latestVersion || "1.0.0");
+                    setSimResult(null);
+                    setIsSimulatorOpen(true);
+                  }}
+                />
               </Tabs.Panel>
             </Tabs>
           </>
@@ -3923,22 +3242,95 @@ curl -O "${origin}/api/apps/${appSlug}/versions/1.0.0/download"`;
                 </Button>
               </Group>
 
-              <SegmentedControl
-                value={docLanguage}
-                onChange={(val) => setDocLanguage(val)}
-                fullWidth={isMobile}
-                data={[
-                  { value: "sdk", label: "TypeScript SDK" },
-                  { value: "csharp", label: "C# (.NET)" },
-                  { value: "rust", label: "Rust (Tauri)" },
-                  { value: "python", label: "Python" },
-                  { value: "fetch", label: "JS (Fetch)" },
-                  { value: "endpoints", label: "cURL" },
-                ]}
-              />
+              <Box style={{ overflowX: "auto", maxWidth: "100%", paddingBottom: 4 }}>
+                <SegmentedControl
+                  value={docLanguage}
+                  onChange={(val) => setDocLanguage(val)}
+                  style={{ minWidth: "max-content" }}
+                  data={[
+                    {
+                      value: "sdk",
+                      label: (
+                        <Group gap={6} justify="center" wrap="nowrap">
+                          <IconBrandJavascript size={15} color="#e0af68" style={{ flexShrink: 0 }} />
+                          <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>TypeScript SDK</Text>
+                        </Group>
+                      ),
+                    },
+                    {
+                      value: "csharp",
+                      label: (
+                        <Group gap={6} justify="center" wrap="nowrap">
+                          <IconBrandCSharp size={15} color="#9d7cd8" style={{ flexShrink: 0 }} />
+                          <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>C# (.NET / WPF)</Text>
+                        </Group>
+                      ),
+                    },
+                    {
+                      value: "rust",
+                      label: (
+                        <Group gap={6} justify="center" wrap="nowrap">
+                          <IconBrandRust size={15} color="#ff9e64" style={{ flexShrink: 0 }} />
+                          <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>Rust (Tauri)</Text>
+                        </Group>
+                      ),
+                    },
+                    {
+                      value: "python",
+                      label: (
+                        <Group gap={6} justify="center" wrap="nowrap">
+                          <IconBrandPython size={15} color="#7aa2f7" style={{ flexShrink: 0 }} />
+                          <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>Python</Text>
+                        </Group>
+                      ),
+                    },
+                    {
+                      value: "fetch",
+                      label: (
+                        <Group gap={6} justify="center" wrap="nowrap">
+                          <IconCode size={15} color="#2ac3de" style={{ flexShrink: 0 }} />
+                          <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>JS (Fetch)</Text>
+                        </Group>
+                      ),
+                    },
+                    {
+                      value: "endpoints",
+                      label: (
+                        <Group gap={6} justify="center" wrap="nowrap">
+                          <IconTerminal2 size={15} color="#73daca" style={{ flexShrink: 0 }} />
+                          <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>cURL / REST</Text>
+                        </Group>
+                      ),
+                    },
+                  ]}
+                />
+              </Box>
 
-              <ScrollArea style={{ maxHeight: 420 }} type="auto" offsetScrollbars>
-                <Code block style={{ fontSize: "12px", padding: 14, whiteSpace: "pre" }}>
+              <ScrollArea
+                h={isMobile ? 320 : 420}
+                type="auto"
+                offsetScrollbars
+                style={{
+                  borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  backgroundColor: "rgba(0,0,0,0.4)",
+                }}
+              >
+                <Code
+                  block
+                  style={{
+                    fontSize: "12px",
+                    lineHeight: 1.6,
+                    padding: 14,
+                    borderRadius: 0,
+                    backgroundColor: "transparent",
+                    border: "none",
+                    fontFamily: "var(--font-mono, Consolas, Monaco, monospace)",
+                    whiteSpace: "pre",
+                    overflow: "visible",
+                    minWidth: "100%",
+                  }}
+                >
                   {getDocCodeSnippet(docLanguage, selectedApp?.slug || "app", window.location.origin)}
                 </Code>
               </ScrollArea>

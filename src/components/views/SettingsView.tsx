@@ -923,7 +923,7 @@ export const SettingsView: React.FC = () => {
                           {
                             value: "sidebar",
                             label: (
-                              <Group gap="xs" justify="center" px="xs" py={2}>
+                              <Group gap="xs" justify="center" px="xs" py={2} wrap="nowrap">
                                 <IconLayoutSidebar size={15} />
                                 <span>Sidebar Navigation</span>
                               </Group>
@@ -932,7 +932,7 @@ export const SettingsView: React.FC = () => {
                           {
                             value: "header",
                             label: (
-                              <Group gap="xs" justify="center" px="xs" py={2}>
+                              <Group gap="xs" justify="center" px="xs" py={2} wrap="nowrap">
                                 <IconLayoutNavbar size={15} />
                                 <span>Header Navigation</span>
                               </Group>

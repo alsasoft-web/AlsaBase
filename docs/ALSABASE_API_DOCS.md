@@ -208,6 +208,76 @@ Deletes an administrator account. Prevents deletion if it is the only remaining 
 
 ---
 
+### 🌐 Non-SDK Authentication Guide (C#, Rust, Python, Fetch)
+
+When integrating applications in languages where the JavaScript SDK is not available, authenticate directly over HTTP:
+
+#### 1. C# (.NET / WPF) Authentication
+```csharp
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+
+using var http = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:8090") };
+
+// A. Login as Admin / Superuser
+var adminRes = await http.PostAsJsonAsync("/api/auth/superusers/login", new { email = "admin@example.com", password = "secretpassword" });
+var adminJson = await adminRes.Content.ReadFromJsonAsync<JsonElement>();
+string adminToken = adminJson.GetProperty("token").GetString();
+
+// B. Login as Regular User
+var userRes = await http.PostAsJsonAsync("/api/collections/users/auth-with-password", new { identity = "user@example.com", password = "secretpassword" });
+var userJson = await userRes.Content.ReadFromJsonAsync<JsonElement>();
+string userToken = userJson.GetProperty("token").GetString();
+
+// C. Attach Bearer Token to Subsequent Requests
+http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", userToken);
+var records = await http.GetFromJsonAsync<JsonElement>("/api/collections/posts/records");
+```
+
+#### 2. Rust (Tauri / reqwest) Authentication
+```rust
+use reqwest::Client;
+use serde_json::json;
+
+let client = Client::new();
+
+// Login as User
+let res = client.post("http://127.0.0.1:8090/api/collections/users/auth-with-password")
+    .json(&json!({ "identity": "user@example.com", "password": "secretpassword" }))
+    .send().await?
+    .json::<serde_json::Value>().await?;
+
+let token = res["token"].as_str().unwrap();
+
+// Protected Request
+let records = client.get("http://127.0.0.1:8090/api/collections/posts/records")
+    .bearer_auth(token)
+    .send().await?
+    .json::<serde_json::Value>().await?;
+```
+
+#### 3. Python (requests) Authentication
+```python
+import requests
+
+session = requests.Session()
+
+# Login as User
+res = session.post("http://127.0.0.1:8090/api/collections/users/auth-with-password", json={
+    "identity": "user@example.com",
+    "password": "secretpassword"
+})
+token = res.json()["token"]
+
+# Attach header for all session calls
+session.headers.update({"Authorization": f"Bearer {token}"})
+records = session.get("http://127.0.0.1:8090/api/collections/posts/records").json()
+```
+
+---
+
 ## 3. Collections & Schema Management
 
 All schema management operations require **Superuser** authentication.
