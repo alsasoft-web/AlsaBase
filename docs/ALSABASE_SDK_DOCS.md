@@ -607,57 +607,73 @@ const downloadUrl = ab.apps.getDownloadUrl("desktop-app", "1.2.0");
 
 ### Superuser Operations (Publishing & Managing Releases)
 
-```typescript
-// 1. Create a new application with PC device access limits
-const app = await ab.apps.createApp({
-  name: "AlsaBase Desktop Client",
-  slug: "desktop-app",
-  description: "Official desktop client for macOS and Windows",
-  maxDevices: 5,                       // Limit the entire app to run on at most 5 PCs
-  devicePolicy: "max_devices",         // "unrestricted" | "max_devices" | "whitelist_only"
-});
+All release management and version publishing operations require superuser authentication. Here is the complete end-to-end workflow showing **both superuser authentication and version upload in a single cohesive script**:
 
-// 2. Upload and publish a new version release
+```typescript
+import AlsaBase from "alsabase";
+import fs from "node:fs";
+
+const ab = new AlsaBase("https://alsabase.example.com");
+
+// ============================================================================
+// Step 1: Authenticate as Superuser / Admin
+// ============================================================================
+// Automatically stores the high-privilege JWT token in ab.authStore for subsequent requests
+await ab.superusers.authWithPassword("admin@example.com", "your-super-secret-password");
+console.log("Superuser authenticated successfully.");
+
+// ============================================================================
+// Step 2: Upload and Publish New Version Release (Base64)
+// ============================================================================
+const installerBuffer = fs.readFileSync("./dist/MyApp-Setup-1.2.0.exe");
+
 const release = await ab.apps.uploadVersion({
   appSlug: "desktop-app",
   version: "1.2.0",
   buildNumber: 120,
-  importance: "automatic", // "automatic" (mandatory) or "optional"
-  channel: "beta",         // "stable" | "beta" | "alpha" | "latest"
+  importance: "automatic", // "automatic" (mandatory force-update) or "optional"
+  channel: "stable",       // "stable" | "beta" | "alpha" | "latest"
   platform: "windows",
-  releaseNotes: "### What's New\n- High performance database sync\n- Realtime connection improvements",
+  releaseNotes: "### What's New in v1.2.0\n- High performance database sync\n- Realtime connection improvements",
   minOsVersion: "Windows 10",
   isActive: true,
 
-  // File binary attachment (base64)
+  // File binary attachment (Base64)
   file: {
-    name: "AlsaBase-Setup-1.2.0.exe",
-    data: "data:application/octet-stream;base64,TVqQAAMAAAAEAAAA...",
-    size: 24500000,
+    name: "MyApp-Setup-1.2.0.exe",
+    data: installerBuffer.toString("base64"),
+    size: installerBuffer.length,
   },
 });
 
-// 2b. High-Performance Direct Binary Streaming Upload (Recommended for large installers > 10MB)
+console.log("Version published successfully:", release.version, release.id);
+console.log("Download URL:", ab.apps.getDownloadUrl("desktop-app", "1.2.0"));
+
+// ============================================================================
+// Step 2b: Direct Binary Streaming Upload (Recommended for large installers >10MB)
+// ============================================================================
 // Avoids 33% Base64 overhead and prevents reverse-proxy 504 Gateway Timeouts:
 const releaseMeta = await ab.apps.uploadVersion({
   appSlug: "desktop-app",
-  version: "1.2.0",
+  version: "1.2.1",
   platform: "windows",
   importance: "optional",
   releaseNotes: "High-performance release",
 });
 
 // Stream raw installer binary directly to disk:
-const installerBuffer = fs.readFileSync("AlsaBase-Setup-1.2.0.exe");
-await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "AlsaBase-Setup-1.2.0.exe");
+await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "MyApp-Setup-1.2.1.exe");
 
-// 3. Update version metadata
+// ============================================================================
+// Step 3: Manage Existing Versions
+// ============================================================================
+// Update version metadata
 await ab.apps.updateVersion(release.id, {
   importance: "optional",
   isActive: true,
 });
 
-// 4. Delete version and its storage file
+// Delete version and its storage file
 await ab.apps.deleteVersion(release.id);
 ```
 

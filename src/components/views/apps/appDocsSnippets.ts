@@ -10,7 +10,7 @@
  */
 
 export interface DocModuleInfo {
-  id: "updates" | "gatekeeper" | "licenses" | "auth" | "logs" | "lifecycle";
+  id: "updates" | "publish" | "gatekeeper" | "licenses" | "auth" | "logs" | "lifecycle";
   title: string;
   badge: string;
   badgeColor: string;
@@ -89,6 +89,104 @@ export function getDocModules(appSlug: string, _origin?: string): DocModuleInfo[
           description: "Download the executable installer or archive file for a specific version. Increments download statistics.",
           successResponse: `HTTP/1.1 200 OK\nContent-Type: application/octet-stream\nContent-Disposition: attachment; filename="${appSlug}-setup.exe"\n[Binary Stream]`,
           errorResponse: JSON.stringify({ error: "Version not found or has no binary attached" }, null, 2),
+        },
+      ],
+    },
+    {
+      id: "publish",
+      title: "Publish & Upload Releases (Admin & CI/CD)",
+      badge: "Superuser Auth + Upload",
+      badgeColor: "grape",
+      description: "Authenticate using administrator / superuser credentials and upload new software versions with installer binary packages directly from your automated CI/CD pipeline or build script.",
+      endpoints: [
+        {
+          method: "POST",
+          path: "/api/auth/superusers/login",
+          auth: "Public / Client",
+          description: "Authenticate as an administrator/superuser to obtain a high-privilege JWT bearer token required for version publishing and application management.",
+          requestBody: JSON.stringify({ email: "admin@example.com", password: "your-secret-password" }, null, 2),
+          successResponse: JSON.stringify(
+            {
+              token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+              user: {
+                id: "su_01a2b3c4",
+                email: "admin@example.com",
+                role: "superuser",
+                created_at: "2026-11-01T00:00:00Z"
+              }
+            },
+            null,
+            2
+          ),
+          errorResponse: JSON.stringify({ error: "Invalid email or password" }, null, 2),
+        },
+        {
+          method: "POST",
+          path: "/api/apps/manage/versions",
+          auth: "Admin Only",
+          description: "Publish a new app version release with metadata (version, build number, channel, platform, release notes) and attached installer binary.",
+          requestBody: JSON.stringify(
+            {
+              appSlug: appSlug,
+              version: "1.2.0",
+              buildNumber: 120,
+              importance: "automatic",
+              channel: "stable",
+              platform: "windows",
+              releaseNotes: "Critical performance fixes, updated UI components, and improved cloud sync.",
+              file: {
+                name: `${appSlug}-Setup-1.2.0.exe`,
+                data: "data:application/octet-stream;base64,TVqQAAMAAAAEAAAA//8AALg...",
+                size: 15482910
+              }
+            },
+            null,
+            2
+          ),
+          successResponse: JSON.stringify(
+            {
+              id: "rel_9876abcd",
+              appId: "app_12345",
+              appSlug: appSlug,
+              version: "1.2.0",
+              buildNumber: 120,
+              importance: "automatic",
+              channel: "stable",
+              platform: "windows",
+              fileName: `${appSlug}-Setup-1.2.0.exe`,
+              fileSize: 15482910,
+              fileHash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              downloadUrl: `/api/apps/${appSlug}/versions/1.2.0/download`,
+              downloadCount: 0,
+              isActive: true,
+              createdAt: "2026-11-04T12:00:00Z"
+            },
+            null,
+            2
+          ),
+          errorResponse: JSON.stringify({ error: "Version string (e.g. '1.0.0') is required" }, null, 2),
+        },
+        {
+          method: "POST",
+          path: "/api/apps/manage/versions/:id/upload",
+          auth: "Admin Only",
+          description: "High-performance direct binary streaming upload for existing releases. Recommended for large installers (>10MB) to eliminate Base64 encoding overhead.",
+          params: [
+            { name: "fileName", type: "string", required: true, desc: "Name of the binary installer (e.g. 'Setup-1.2.0.exe')" }
+          ],
+          successResponse: JSON.stringify(
+            {
+              id: "rel_9876abcd",
+              fileName: `${appSlug}-Setup-1.2.0.exe`,
+              fileSize: 45291820,
+              fileHash: "a1b2c3d4...",
+              downloadUrl: `/api/apps/${appSlug}/versions/1.2.0/download`,
+              updatedAt: "2026-11-04T12:05:00Z"
+            },
+            null,
+            2
+          ),
+          errorResponse: JSON.stringify({ error: "Version release not found" }, null, 2),
         },
       ],
     },
@@ -421,7 +519,7 @@ export function getDocModules(appSlug: string, _origin?: string): DocModuleInfo[
 // ============================================================================
 
 export function getModuleSnippet(
-  moduleId: "updates" | "gatekeeper" | "licenses" | "auth" | "logs" | "lifecycle",
+  moduleId: "updates" | "publish" | "gatekeeper" | "licenses" | "auth" | "logs" | "lifecycle",
   lang: string,
   appSlug: string,
   origin: string
@@ -429,6 +527,8 @@ export function getModuleSnippet(
   switch (moduleId) {
     case "updates":
       return getUpdateSnippet(lang, appSlug, origin);
+    case "publish":
+      return getPublishSnippet(lang, appSlug, origin);
     case "gatekeeper":
       return getGatekeeperSnippet(lang, appSlug, origin);
     case "licenses":
@@ -617,10 +717,13 @@ async function checkForUpdate(currentVersion = "1.0.0", platform = "windows") {
 
     case "sdk":
       return `import AlsaBase from "alsabase";
+import fs from "node:fs";
 
 const ab = new AlsaBase("${origin}");
 
-// Check for updates with automatic semver evaluation
+// ============================================================================
+// PART A: Client App - Check For & Download Updates
+// ============================================================================
 const update = await ab.apps.checkUpdate("${appSlug}", {
   currentVersion: "1.0.0",
   platform: "windows",
@@ -628,11 +731,37 @@ const update = await ab.apps.checkUpdate("${appSlug}", {
 
 if (update.hasUpdate) {
   console.log("New version available:", update.latestVersion);
-  console.log("Is mandatory:", update.isAutomatic);
+  console.log("Is mandatory force update:", update.isAutomatic);
   console.log("Direct download URL:", update.downloadUrl);
 } else {
   console.log("App is up to date.");
-}`;
+}
+
+// ============================================================================
+// PART B: Developer / CI/CD - Login & Upload New Version (One Combined Script)
+// ============================================================================
+// Step 1: Login as Superuser / Admin
+await ab.superusers.authWithPassword("admin@example.com", "your-admin-password");
+
+// Step 2: Read binary installer and publish release
+const installer = fs.readFileSync("./dist/MyApp-Setup-1.2.0.exe");
+
+const release = await ab.apps.uploadVersion({
+  appSlug: "${appSlug}",
+  version: "1.2.0",
+  buildNumber: 120,
+  channel: "stable",
+  platform: "windows",
+  importance: "automatic",
+  releaseNotes: "Feature update and performance optimizations.",
+  file: {
+    name: "MyApp-Setup-1.2.0.exe",
+    data: installer.toString("base64"),
+    size: installer.length,
+  },
+});
+
+console.log("Release published successfully:", release.version, release.id);`;
 
     case "endpoints":
     default:
@@ -644,6 +773,507 @@ curl "${origin}/api/apps/${appSlug}/check-update?currentVersion=1.0.0&platform=w
 
 # 3. Download the version 1.2.0 installer binary directly
 curl -O "${origin}/api/apps/${appSlug}/versions/1.2.0/download"`;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 1b. PUBLISH & UPLOAD RELEASES (SUPERUSER AUTH + RELEASE UPLOAD)
+// ----------------------------------------------------------------------------
+function getPublishSnippet(lang: string, appSlug: string, origin: string): string {
+  switch (lang) {
+    case "csharp":
+      return `using System;
+using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+public class AlsaBaseReleasePublisher
+{
+    private static readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+    private const string BaseUrl = "${origin}";
+    private const string AppSlug = "${appSlug}";
+
+    /// <summary>
+    /// Authenticates as a Superuser and publishes a new version with an attached installer binary.
+    /// Demonstrates the complete flow: Superuser Login -> Acquire Bearer Token -> Upload Release.
+    /// </summary>
+    public static async Task PublishReleaseAsync(
+        string adminEmail,
+        string adminPassword,
+        string version,
+        int buildNumber,
+        string installerFilePath,
+        string channel = "stable",
+        string platform = "windows",
+        bool isMandatory = true,
+        string releaseNotes = "Automated production build update.")
+    {
+        Console.WriteLine($"[1/2] Authenticating as Superuser ({adminEmail})...");
+
+        // Step 1: Login to obtain high-privilege JWT Bearer Token
+        var loginPayload = new { email = adminEmail, password = adminPassword };
+        var loginRes = await _http.PostAsJsonAsync($"{BaseUrl}/api/auth/superusers/login", loginPayload);
+        if (!loginRes.IsSuccessStatusCode)
+        {
+            var err = await loginRes.Content.ReadAsStringAsync();
+            throw new Exception($"Superuser authentication failed ({loginRes.StatusCode}): {err}");
+        }
+
+        var loginData = await loginRes.Content.ReadFromJsonAsync<JsonElement>();
+        string token = loginData.GetProperty("token").GetString();
+        Console.WriteLine("Superuser authenticated successfully. Bearer token acquired.");
+
+        // Step 2: Read binary installer and encode to Base64
+        Console.WriteLine($"[2/2] Reading installer binary: {Path.GetFileName(installerFilePath)}...");
+        if (!File.Exists(installerFilePath))
+        {
+            throw new FileNotFoundException("Installer binary not found", installerFilePath);
+        }
+
+        byte[] fileBytes = await File.ReadAllBytesAsync(installerFilePath);
+        string fileBase64 = Convert.ToBase64String(fileBytes);
+        string fileName = Path.GetFileName(installerFilePath);
+
+        var uploadPayload = new
+        {
+            appSlug = AppSlug,
+            version = version,
+            buildNumber = buildNumber,
+            importance = isMandatory ? "automatic" : "optional",
+            channel = channel,
+            platform = platform,
+            releaseNotes = releaseNotes,
+            file = new
+            {
+                name = fileName,
+                data = $"data:application/octet-stream;base64,{fileBase64}",
+                size = fileBytes.Length
+            }
+        };
+
+        // Attach authorization header for superuser request
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/api/apps/manage/versions");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(uploadPayload);
+
+        Console.WriteLine($"Uploading and publishing version v{version} to AlsaBase...");
+        var releaseRes = await _http.SendAsync(request);
+        if (!releaseRes.IsSuccessStatusCode)
+        {
+            var err = await releaseRes.Content.ReadAsStringAsync();
+            throw new Exception($"Failed to upload version ({releaseRes.StatusCode}): {err}");
+        }
+
+        var releaseData = await releaseRes.Content.ReadFromJsonAsync<JsonElement>();
+        string releaseId = releaseData.GetProperty("id").GetString();
+        string downloadUrl = releaseData.GetProperty("downloadUrl").GetString();
+
+        Console.WriteLine($"Release v{version} published successfully!");
+        Console.WriteLine($"Release ID: {releaseId}");
+        Console.WriteLine($"Download URL: {BaseUrl}{downloadUrl}");
+    }
+
+    public static async Task Main(string[] args)
+    {
+        await PublishReleaseAsync(
+            adminEmail: "admin@example.com",
+            adminPassword: "your-admin-password",
+            version: "1.2.0",
+            buildNumber: 120,
+            installerFilePath: "./dist/MyApp-Setup-1.2.0.exe",
+            channel: "stable",
+            platform: "windows",
+            isMandatory: true,
+            releaseNotes: "Critical performance fixes, updated UI components, and security patches."
+        );
+    }
+}`;
+
+    case "rust":
+      return `use reqwest::Client;
+use serde_json::json;
+use std::error::Error;
+use std::path::Path;
+
+const BASE_URL: &str = "${origin}";
+const APP_SLUG: &str = "${appSlug}";
+
+/// Demonstrates the complete flow:
+/// Step 1: Login as Superuser -> Step 2: Upload new version with binary installer.
+pub async fn publish_new_version(
+    admin_email: &str,
+    admin_password: &str,
+    version: &str,
+    build_number: u32,
+    installer_path: &str,
+) -> Result<(), Box<dyn Error>> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()?;
+
+    // Step 1: Login to obtain JWT Bearer token
+    println!("[1/2] Authenticating as superuser ({})...", admin_email);
+    let login_res = client
+        .post(format!("{}/api/auth/superusers/login", BASE_URL))
+        .json(&json!({
+            "email": admin_email,
+            "password": admin_password
+        }))
+        .send()
+        .await?;
+
+    if !login_res.status().is_success() {
+        let err = login_res.text().await?;
+        return Err(format!("Superuser login failed: {}", err).into());
+    }
+
+    let login_data: serde_json::Value = login_res.json().await?;
+    let token = login_data["token"].as_str().ok_or("Missing token in login response")?;
+    println!("Superuser authenticated successfully. Bearer token acquired.");
+
+    // Step 2: Read binary installer and encode to base64
+    println!("[2/2] Reading installer binary: {}", installer_path);
+    let file_bytes = std::fs::read(installer_path)?;
+    let file_base64 = base64::encode(&file_bytes);
+    let file_name = Path::new(installer_path)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("release.exe");
+
+    let payload = json!({
+        "appSlug": APP_SLUG,
+        "version": version,
+        "buildNumber": build_number,
+        "importance": "automatic",
+        "channel": "stable",
+        "platform": "windows",
+        "releaseNotes": "Automated production build release.",
+        "file": {
+            "name": file_name,
+            "data": format!("data:application/octet-stream;base64,{}", file_base64),
+            "size": file_bytes.len()
+        }
+    });
+
+    println!("Uploading and publishing version v{} to AlsaBase...", version);
+    let upload_res = client
+        .post(format!("{}/api/apps/manage/versions", BASE_URL))
+        .bearer_auth(token)
+        .json(&payload)
+        .send()
+        .await?;
+
+    if !upload_res.status().is_success() {
+        let err = upload_res.text().await?;
+        return Err(format!("Version upload failed: {}", err).into());
+    }
+
+    let release_data: serde_json::Value = upload_res.json().await?;
+    println!("Version v{} published successfully!", version);
+    println!("Release ID: {}", release_data["id"]);
+    println!("Download URL: {}{}", BASE_URL, release_data["downloadUrl"]);
+
+    Ok(())
+}`;
+
+    case "python":
+      return `import os
+import base64
+import requests
+
+BASE_URL = "${origin}"
+APP_SLUG = "${appSlug}"
+
+def publish_new_version(
+    admin_email: str,
+    admin_password: str,
+    version: str,
+    build_number: int,
+    installer_path: str,
+    channel: str = "stable",
+    platform: str = "windows",
+    is_mandatory: bool = True,
+    release_notes: str = "Automated release update"
+):
+    """
+    Complete release workflow in one function:
+    1. Authenticates as Superuser / Admin to retrieve the JWT Bearer token.
+    2. Reads the installer binary from disk, encodes it, and publishes the new version.
+    """
+    print(f"[1/2] Authenticating as superuser ({admin_email})...")
+    login_url = f"{BASE_URL}/api/auth/superusers/login"
+    login_res = requests.post(
+        login_url,
+        json={"email": admin_email, "password": admin_password},
+        timeout=15
+    )
+    login_res.raise_for_status()
+    token = login_res.json().get("token")
+    print("Superuser authenticated successfully. Bearer token acquired.")
+
+    print(f"[2/2] Reading and encoding binary installer: {installer_path}...")
+    if not os.path.exists(installer_path):
+        raise FileNotFoundError(f"Installer binary not found: {installer_path}")
+
+    with open(installer_path, "rb") as f:
+        file_bytes = f.read()
+
+    file_base64 = base64.b64encode(file_bytes).decode("utf-8")
+    file_name = os.path.basename(installer_path)
+
+    upload_url = f"{BASE_URL}/api/apps/manage/versions"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "appSlug": APP_SLUG,
+        "version": version,
+        "buildNumber": build_number,
+        "importance": "automatic" if is_mandatory else "optional",
+        "channel": channel,
+        "platform": platform,
+        "releaseNotes": release_notes,
+        "file": {
+            "name": file_name,
+            "data": f"data:application/octet-stream;base64,{file_base64}",
+            "size": len(file_bytes)
+        }
+    }
+
+    print(f"Uploading and publishing version v{version} to AlsaBase...")
+    upload_res = requests.post(upload_url, headers=headers, json=payload, timeout=120)
+    upload_res.raise_for_status()
+    release = upload_res.json()
+
+    print(f"Version v{version} published successfully!")
+    print(f"Release ID: {release.get('id')}")
+    print(f"Download URL: {BASE_URL}{release.get('downloadUrl')}")
+    return release
+
+if __name__ == "__main__":
+    publish_new_version(
+        admin_email="admin@example.com",
+        admin_password="your-admin-password",
+        version="1.2.0",
+        build_number=120,
+        installer_path="./dist/MyApp-Setup-1.2.0.exe",
+        channel="stable",
+        platform="windows",
+        is_mandatory=True,
+        release_notes="Bug fixes, performance improvements, and updated assets."
+    )`;
+
+    case "fetch":
+      return `import fs from "node:fs";
+import path from "node:path";
+
+const BASE_URL = "${origin}";
+const APP_SLUG = "${appSlug}";
+
+/**
+ * Complete release publishing workflow:
+ * 1. Log in as Superuser to obtain Bearer Token.
+ * 2. Read installer file from disk and upload new version release.
+ */
+async function publishNewVersion({
+  adminEmail,
+  adminPassword,
+  version,
+  buildNumber,
+  installerPath,
+  channel = "stable",
+  platform = "windows",
+  isMandatory = true,
+  releaseNotes = "New production update",
+}) {
+  // Step 1: Authenticate as Superuser / Admin
+  console.log(\`[1/2] Authenticating as superuser (\${adminEmail})...\`);
+  const loginRes = await fetch(\`\${BASE_URL}/api/auth/superusers/login\`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+  });
+
+  if (!loginRes.ok) {
+    const errorText = await loginRes.text();
+    throw new Error(\`Login failed (\${loginRes.status}): \${errorText}\`);
+  }
+
+  const { token } = await loginRes.json();
+  console.log("Superuser authenticated successfully. Bearer token acquired.");
+
+  // Step 2: Read binary installer and convert to base64
+  console.log(\`[2/2] Reading installer binary: \${installerPath}...\`);
+  const fileBuffer = fs.readFileSync(installerPath);
+  const fileBase64 = fileBuffer.toString("base64");
+  const fileName = path.basename(installerPath);
+
+  // Step 3: Publish release to AlsaBase
+  console.log(\`Uploading and publishing version v\${version} to AlsaBase...\`);
+  const uploadRes = await fetch(\`\${BASE_URL}/api/apps/manage/versions\`, {
+    method: "POST",
+    headers: {
+      "Authorization": \`Bearer \${token}\`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      appSlug: APP_SLUG,
+      version,
+      buildNumber,
+      importance: isMandatory ? "automatic" : "optional",
+      channel,
+      platform,
+      releaseNotes,
+      file: {
+        name: fileName,
+        data: \`data:application/octet-stream;base64,\${fileBase64}\`,
+        size: fileBuffer.length,
+      },
+    }),
+  });
+
+  if (!uploadRes.ok) {
+    const errorText = await uploadRes.text();
+    throw new Error(\`Release upload failed (\${uploadRes.status}): \${errorText}\`);
+  }
+
+  const release = await uploadRes.json();
+  console.log(\`Version v\${version} published successfully!\`);
+  console.log(\`Release ID: \${release.id}\`);
+  console.log(\`Download URL: \${BASE_URL}\${release.downloadUrl}\`);
+  return release;
+}
+
+// Example Execution:
+publishNewVersion({
+  adminEmail: "admin@example.com",
+  adminPassword: "your-admin-password",
+  version: "1.2.0",
+  buildNumber: 120,
+  installerPath: "./dist/MyApp-Setup-1.2.0.exe",
+  channel: "stable",
+  platform: "windows",
+  isMandatory: true,
+  releaseNotes: "Feature update and critical bug fixes.",
+});`;
+
+    case "sdk":
+      return `import AlsaBase from "alsabase";
+import fs from "node:fs";
+
+// Initialize AlsaBase client
+const ab = new AlsaBase("${origin}");
+
+async function publishRelease() {
+  // Step 1: Login as Superuser / Admin (Stores Bearer token in authStore automatically)
+  console.log("[1/2] Authenticating as superuser...");
+  const admin = await ab.superusers.authWithPassword("admin@example.com", "your-admin-password");
+  console.log("Authenticated as:", admin.user.email);
+
+  // Step 2: Read binary installer file from disk
+  console.log("[2/2] Reading installer binary...");
+  const installerBuffer = fs.readFileSync("./dist/MyApp-Setup-1.2.0.exe");
+
+  // Step 3: Publish new version with attached binary (Both login and upload in one script!)
+  console.log("Uploading version release v1.2.0...");
+  const release = await ab.apps.uploadVersion({
+    appSlug: "${appSlug}",
+    version: "1.2.0",
+    buildNumber: 120,
+    channel: "stable",           // "stable" | "beta" | "alpha" | "latest"
+    platform: "windows",          // "windows" | "linux" | "darwin" | "all"
+    importance: "automatic",      // "automatic" (mandatory force-update) or "optional"
+    releaseNotes: "### What's New in v1.2.0\\n- Realtime database sync engine\\n- Critical security patches",
+    file: {
+      name: "MyApp-Setup-1.2.0.exe",
+      data: installerBuffer.toString("base64"),
+      size: installerBuffer.length,
+    },
+  });
+
+  console.log("Release published successfully!");
+  console.log("Release ID:", release.id);
+  console.log("Download URL:", ab.apps.getDownloadUrl("${appSlug}", "1.2.0"));
+
+  // --------------------------------------------------------------------------
+  // Alternative: High-Performance Direct Binary Streaming Upload
+  // (Recommended for large installers > 10MB to eliminate Base64 memory overhead)
+  // --------------------------------------------------------------------------
+  // const releaseMeta = await ab.apps.uploadVersion({
+  //   appSlug: "${appSlug}",
+  //   version: "1.2.1",
+  //   importance: "optional",
+  //   platform: "windows",
+  // });
+  // await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "MyApp-Setup-1.2.1.exe");
+}
+
+publishRelease().catch(console.error);`;
+
+    case "endpoints":
+    default:
+      return `#!/usr/bin/env bash
+# ==============================================================================
+# AlsaBase CI/CD Release Publisher (Login + Upload in One Script)
+# ==============================================================================
+set -e
+
+BASE_URL="${origin}"
+APP_SLUG="${appSlug}"
+ADMIN_EMAIL="admin@example.com"
+ADMIN_PASSWORD="your-admin-password"
+VERSION="1.2.0"
+BUILD_NUMBER=120
+INSTALLER_PATH="./dist/MyApp-Setup-1.2.0.exe"
+
+# Step 1: Login to AlsaBase as Superuser to obtain Bearer Token
+echo "[1/3] Logging in as superuser ($ADMIN_EMAIL)..."
+LOGIN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/auth/superusers/login" \\
+  -H "Content-Type: application/json" \\
+  -d "{\\"email\\":\\"$ADMIN_EMAIL\\",\\"password\\":\\"$ADMIN_PASSWORD\\"}")
+
+TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+
+if [ -z "$TOKEN" ]; then
+  echo "Error: Failed to authenticate as superuser:"
+  echo "$LOGIN_RESPONSE"
+  exit 1
+fi
+
+echo "Authenticated successfully. Bearer token acquired."
+
+# Step 2: Read installer file and encode to Base64
+echo "[2/3] Encoding binary installer ($INSTALLER_PATH)..."
+FILE_NAME=$(basename "$INSTALLER_PATH")
+FILE_SIZE=$(wc -c < "$INSTALLER_PATH" | tr -d ' ')
+FILE_BASE64=$(base64 -w 0 "$INSTALLER_PATH" 2>/dev/null || base64 "$INSTALLER_PATH")
+
+# Step 3: Publish new release version with attached installer binary
+echo "[3/3] Uploading and publishing version v$VERSION to AlsaBase..."
+RELEASE_RESPONSE=$(curl -s -X POST "$BASE_URL/api/apps/manage/versions" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d "{
+    \\"appSlug\\": \\"$APP_SLUG\\",
+    \\"version\\": \\"$VERSION\\",
+    \\"buildNumber\\": $BUILD_NUMBER,
+    \\"importance\\": \\"automatic\\",
+    \\"channel\\": \\"stable\\",
+    \\"platform\\": \\"windows\\",
+    \\"releaseNotes\\": \\"Automated CI/CD build release\\",
+    \\"file\\": {
+      \\"name\\": \\"$FILE_NAME\\",
+      \\"data\\": \\"$FILE_BASE64\\",
+      \\"size\\": $FILE_SIZE
+    }
+  }")
+
+echo "Release published successfully:"
+echo "$RELEASE_RESPONSE"`;
   }
 }
 

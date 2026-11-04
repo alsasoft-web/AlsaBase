@@ -1297,7 +1297,38 @@ Deletes an application, all its releases, and all physical binary files from dis
 Lists releases across all applications, with optional `?appId=...` filter.
 
 #### `POST /api/apps/manage/versions`
-Uploads and publishes a new release version with an attached binary package.
+Uploads and publishes a new release version with an attached binary package. Requires superuser authorization (`Authorization: Bearer <token>`).
+
+- **Unified Superuser Login & Version Upload Example (cURL / Bash)**:
+  ```bash
+  # Step 1: Login as superuser to retrieve high-privilege JWT Bearer token
+  TOKEN=$(curl -s -X POST "https://alsabase.example.com/api/auth/superusers/login" \
+    -H "Content-Type: application/json" \
+    -d '{"email":"admin@example.com","password":"your-password"}' \
+    | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+
+  # Step 2: Encode binary installer file to Base64
+  FILE_BASE64=$(base64 -w 0 "./dist/MyApp-Setup-1.2.0.exe" 2>/dev/null || base64 "./dist/MyApp-Setup-1.2.0.exe")
+
+  # Step 3: Publish new release version using the Bearer token
+  curl -X POST "https://alsabase.example.com/api/apps/manage/versions" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "appSlug": "desktop-client",
+      "version": "1.2.0",
+      "buildNumber": 102,
+      "importance": "automatic",
+      "channel": "stable",
+      "platform": "windows",
+      "releaseNotes": "Performance improvements and bug fixes",
+      "file": {
+        "name": "Desktop-Setup-1.2.0.exe",
+        "data": "'"$FILE_BASE64"'"
+      }
+    }'
+  ```
+
 - **Body**:
   ```json
   {

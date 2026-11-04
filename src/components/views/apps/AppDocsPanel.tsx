@@ -20,6 +20,7 @@ import {
   IconPlayerPlay,
   IconCode,
   IconDownload,
+  IconUpload,
   IconTerminal2,
   IconKey,
   IconDeviceDesktop,
@@ -190,6 +191,15 @@ export const AppDocsPanel: React.FC<AppDocsPanelProps> = ({
                   <Group gap={6} wrap="nowrap">
                     <IconDownload size={14} color="#3b82f6" />
                     <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>App Updates</Text>
+                  </Group>
+                ),
+              },
+              {
+                value: "publish",
+                label: (
+                  <Group gap={6} wrap="nowrap">
+                    <IconUpload size={14} color="#a855f7" />
+                    <Text size="xs" fw={600} style={{ whiteSpace: "nowrap" }}>Upload New Version</Text>
                   </Group>
                 ),
               },
