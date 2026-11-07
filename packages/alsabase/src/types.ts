@@ -51,6 +51,14 @@ export interface ListResult<T> {
   items: T[];
 }
 
+export interface ClientOptions {
+  /**
+   * Default request timeout in milliseconds for all requests (0 = no timeout).
+   * Recommended: 600000 (10 minutes) for large application installer uploads.
+   */
+  timeout?: number;
+}
+
 export interface SendOptions extends RequestInit {
   query?: Record<string, any>;
   params?: Record<string, any>;
@@ -58,6 +66,10 @@ export interface SendOptions extends RequestInit {
   body?: any;
   requestKey?: string | null;
   autoCancel?: boolean;
+  /**
+   * Request timeout in milliseconds (0 = no timeout).
+   */
+  timeout?: number;
 }
 
 export interface CommonOptions {
@@ -66,6 +78,11 @@ export interface CommonOptions {
   filter?: string;
   sort?: string;
   requestKey?: string | null;
+  /**
+   * Request timeout in milliseconds (0 = no timeout).
+   */
+  timeout?: number;
+  headers?: Record<string, string>;
   [key: string]: any;
 }
 
@@ -486,6 +503,11 @@ export interface AppVersionUploadOptions extends CommonOptions {
   releaseNotes?: string;
   minOsVersion?: string;
   isActive?: boolean;
+  /**
+   * Request timeout in milliseconds for this upload (e.g. 600000 for 10 minutes).
+   * Overrides client-level timeout.
+   */
+  timeout?: number;
   file?:
     | {
         name: string;

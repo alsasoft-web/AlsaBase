@@ -1527,6 +1527,12 @@ export interface AppSettings {
     includePublic: boolean;
     includeHooks: boolean;
   };
+  uploads: {
+    maxUploadSizeMb: number;
+    requestTimeoutSec: number;
+    keepAliveTimeoutSec: number;
+    headersTimeoutSec: number;
+  };
 }
 
 export interface BackupItem {

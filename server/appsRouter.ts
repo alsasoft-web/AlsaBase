@@ -5,6 +5,7 @@ import path from "node:path";
 import { db } from "./db";
 import { requireSuperuser, AuthPayload } from "./auth";
 import { FILES_DIR, MIME_TYPES } from "./files";
+import { getAllSettings } from "./settings";
 
 export const appsRouter = Router();
 
@@ -985,6 +986,17 @@ appsRouter.post("/manage/versions", requireSuperuser, (req: Request, res: Respon
       }
 
       if (fileBuffer) {
+        const settings = getAllSettings();
+        const maxUploadBytes = (settings.uploads?.maxUploadSizeMb || 500) * 1024 * 1024;
+        if (fileBuffer.length > maxUploadBytes) {
+          const sizeMb = (fileBuffer.length / (1024 * 1024)).toFixed(1);
+          const limitMb = settings.uploads?.maxUploadSizeMb || 500;
+          return res.status(413).json({
+            error: `Uploaded binary (${sizeMb} MB) exceeds maximum upload limit (${limitMb} MB). Adjust this limit in Settings -> General -> Upload & Timeout Limits.`,
+            code: 413,
+          });
+        }
+
         const ext = path.extname(origName) || "";
         const base = path.parse(origName).name.replace(/[^a-zA-Z0-9_-]/g, "_") || "release";
         savedFileName = `${base}_${cleanVersion}${ext}`;
@@ -1078,15 +1090,29 @@ appsRouter.post("/manage/versions/:id/upload", requireSuperuser, (req: Request, 
     const writeStream = fs.createWriteStream(savedFilePath);
     const hash = crypto.createHash("sha256");
     let totalBytes = 0;
+    let limitExceeded = false;
+
+    const settings = getAllSettings();
+    const maxUploadBytes = (settings.uploads?.maxUploadSizeMb || 500) * 1024 * 1024;
 
     req.on("data", (chunk: Buffer) => {
       totalBytes += chunk.length;
+      if (totalBytes > maxUploadBytes && !limitExceeded) {
+        limitExceeded = true;
+        writeStream.destroy();
+        try { if (fs.existsSync(savedFilePath)) fs.unlinkSync(savedFilePath); } catch {}
+        return res.status(413).json({
+          error: `Streamed binary size exceeds maximum upload limit (${settings.uploads?.maxUploadSizeMb || 500} MB). Adjust this limit in Settings -> General -> Upload & Timeout Limits.`,
+          code: 413,
+        });
+      }
       hash.update(chunk);
     });
 
     req.pipe(writeStream);
 
     writeStream.on("finish", () => {
+      if (limitExceeded) return;
       const fileHash = hash.digest("hex");
       const now = new Date().toISOString();
 

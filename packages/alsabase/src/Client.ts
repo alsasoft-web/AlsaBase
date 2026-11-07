@@ -18,11 +18,13 @@ import type {
   AppUpdateCheckOptions,
   AppUpdateCheckResult,
   HwidOptions,
+  ClientOptions,
 } from "./types";
 
 export class AlsaBase {
   baseUrl: string;
   authStore: BaseAuthStore;
+  timeout: number = 0;
 
   readonly superusers: SuperuserService;
   readonly collections: CollectionService;
@@ -37,12 +39,21 @@ export class AlsaBase {
 
   constructor(
     baseUrl: string = "/",
-    authStore?: BaseAuthStore
+    authStore?: BaseAuthStore,
+    options?: ClientOptions | number
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.authStore =
       authStore ||
       (typeof window !== "undefined" ? new LocalAuthStore() : new BaseAuthStore());
+
+    if (typeof options === "number") {
+      this.timeout = options;
+    } else if (options && typeof options === "object") {
+      this.timeout = options.timeout || 0;
+    } else {
+      this.timeout = 0;
+    }
 
     this.superusers = new SuperuserService(this);
     this.collections = new CollectionService(this);
@@ -233,6 +244,31 @@ export class AlsaBase {
       this.cancelControllers.set(requestKey, controller);
     }
 
+    const effectiveTimeout = options.timeout ?? this.timeout ?? 0;
+    let timeoutTimer: any = null;
+    let timedOut = false;
+
+    if (!controller && (effectiveTimeout > 0 || options.signal)) {
+      controller = new AbortController();
+    }
+
+    if (effectiveTimeout > 0 && controller) {
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        controller?.abort(new Error(`Request timed out after ${effectiveTimeout}ms`));
+      }, effectiveTimeout);
+    }
+
+    if (options.signal && controller) {
+      if (options.signal.aborted) {
+        controller.abort(options.signal.reason);
+      } else {
+        options.signal.addEventListener("abort", () => {
+          controller?.abort(options.signal?.reason);
+        });
+      }
+    }
+
     const headers: Record<string, string> = {
       ...(options.headers || {}),
     };
@@ -268,6 +304,10 @@ export class AlsaBase {
     try {
       const response = await fetch(url, fetchOptions);
 
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+
       if (requestKey) {
         this.cancelControllers.delete(requestKey);
       }
@@ -282,18 +322,42 @@ export class AlsaBase {
       }
 
       if (!response.ok) {
+        let errorData = data;
+        if (response.status === 499) {
+          errorData = {
+            message:
+              "Client Closed Request (Status 499). The upload connection was closed prematurely. If you are uploading a large binary (>10MB), increase the client timeout (e.g. { timeout: 600000 }), use uploadVersionBinary() streaming, and ensure reverse proxies (such as Nginx) have 'client_max_body_size 500M;' and 'proxy_read_timeout 600s;' configured.",
+            original: data,
+          };
+        }
         throw new ClientResponseError({
           url,
           status: response.status,
-          data,
+          data: errorData,
           response,
         });
       }
 
       return data as T;
     } catch (err: any) {
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+
       if (requestKey) {
         this.cancelControllers.delete(requestKey);
+      }
+
+      if (timedOut) {
+        throw new ClientResponseError({
+          url,
+          status: 408,
+          data: {
+            message: `Request timed out after ${effectiveTimeout}ms. For large installer uploads, increase the timeout (e.g. { timeout: 600000 }) or use uploadVersionBinary() streaming.`,
+            isTimeout: true,
+          },
+          originalError: err,
+        });
       }
 
       if (err.name === "AbortError") {

@@ -1079,6 +1079,140 @@ export const SettingsView: React.FC = () => {
                   </Stack>
                 </Card>
 
+                {/* Upload & Timeout Limits Card */}
+                <Card
+                  withBorder
+                  padding="lg"
+                  radius="md"
+                  style={{ backgroundColor: "var(--color-bg-card)" }}
+                >
+                  <Group justify="space-between" mb="xs">
+                    <Group gap="xs">
+                      <IconUpload
+                        size={18}
+                        color="var(--color-neon-primary)"
+                      />
+                      <Text fw={700} size="md">
+                        Upload &amp; Timeout Limits
+                      </Text>
+                    </Group>
+                    <Badge
+                      size="sm"
+                      variant="filled"
+                      style={{
+                        backgroundColor: "var(--color-neon-dim)",
+                        color: "var(--color-neon-primary)",
+                      }}
+                    >
+                      {settings.uploads?.maxUploadSizeMb || 500} MB / {(settings.uploads?.requestTimeoutSec || 600)}s
+                    </Badge>
+                  </Group>
+
+                  <Text size="xs" c="dimmed" mb="md">
+                    Configure maximum upload payload sizes and server connection timeouts for application releases, large installers, and bulk database operations.
+                  </Text>
+
+                  <Stack gap="md">
+                    <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
+                      <NumberInput
+                        label="Max Upload Size (MB)"
+                        description="Maximum request payload and binary installer size"
+                        value={settings.uploads?.maxUploadSizeMb || 500}
+                        min={10}
+                        max={5000}
+                        step={50}
+                        suffix=" MB"
+                        onChange={(val) =>
+                          setSettings({
+                            ...settings,
+                            uploads: {
+                              ...(settings.uploads || {
+                                maxUploadSizeMb: 500,
+                                requestTimeoutSec: 600,
+                                keepAliveTimeoutSec: 120,
+                                headersTimeoutSec: 125,
+                              }),
+                              maxUploadSizeMb: Number(val) || 500,
+                            },
+                          })
+                        }
+                      />
+                      <NumberInput
+                        label="Request Timeout (Seconds)"
+                        description="Server timeout before closing long upload requests"
+                        value={settings.uploads?.requestTimeoutSec || 600}
+                        min={30}
+                        max={3600}
+                        step={30}
+                        suffix=" s"
+                        onChange={(val) =>
+                          setSettings({
+                            ...settings,
+                            uploads: {
+                              ...(settings.uploads || {
+                                maxUploadSizeMb: 500,
+                                requestTimeoutSec: 600,
+                                keepAliveTimeoutSec: 120,
+                                headersTimeoutSec: 125,
+                              }),
+                              requestTimeoutSec: Number(val) || 600,
+                            },
+                          })
+                        }
+                      />
+                      <NumberInput
+                        label="Keep-Alive Timeout (Seconds)"
+                        description="Idle connection timeout for HTTP sockets"
+                        value={settings.uploads?.keepAliveTimeoutSec || 120}
+                        min={10}
+                        max={600}
+                        step={10}
+                        suffix=" s"
+                        onChange={(val) =>
+                          setSettings({
+                            ...settings,
+                            uploads: {
+                              ...(settings.uploads || {
+                                maxUploadSizeMb: 500,
+                                requestTimeoutSec: 600,
+                                keepAliveTimeoutSec: 120,
+                                headersTimeoutSec: 125,
+                              }),
+                              keepAliveTimeoutSec: Number(val) || 120,
+                            },
+                          })
+                        }
+                      />
+                    </SimpleGrid>
+
+                    <Paper
+                      p="sm"
+                      withBorder
+                      style={{
+                        backgroundColor: "var(--color-bg-well)",
+                        borderColor: "var(--color-border)",
+                        borderRadius: 8,
+                      }}
+                    >
+                      <Stack gap={6}>
+                        <Text size="xs" fw={600} style={{ color: "#eab308" }}>
+                          Running Behind Nginx, Traefik, or Cloudflare Reverse Proxy?
+                        </Text>
+                        <Text size="11px" c="dimmed">
+                          If you receive <code>Status 499 (Client Closed Request)</code> or <code>Status 413 (Payload Too Large)</code> when uploading large installers, ensure your proxy timeout and upload body size match or exceed AlsaBase:
+                        </Text>
+                        <Code block style={{ fontSize: "11px", marginTop: 4 }}>
+{`# Nginx configuration (e.g. /etc/nginx/sites-available/...):
+client_max_body_size ${(settings.uploads?.maxUploadSizeMb || 500)}M;
+proxy_read_timeout ${(settings.uploads?.requestTimeoutSec || 600)}s;
+proxy_connect_timeout ${(settings.uploads?.requestTimeoutSec || 600)}s;
+proxy_send_timeout ${(settings.uploads?.requestTimeoutSec || 600)}s;`}
+                        </Code>
+                      </Stack>
+                    </Paper>
+                  </Stack>
+                </Card>
+
                 {/* Superuser IPs Card (Matching Image 3) */}
                 <Card
                   withBorder

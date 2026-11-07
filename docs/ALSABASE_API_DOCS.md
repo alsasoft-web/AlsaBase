@@ -1299,10 +1299,15 @@ Lists releases across all applications, with optional `?appId=...` filter.
 #### `POST /api/apps/manage/versions`
 Uploads and publishes a new release version with an attached binary package. Requires superuser authorization (`Authorization: Bearer <token>`).
 
+- **Configuring Maximum Upload Size & Server Timeouts**:
+  - In Admin Dashboard: navigate to **Settings -> General -> Upload & Timeout Limits** to customize `maxUploadSizeMb` (default: 500 MB) and `requestTimeoutSec` (default: 600s).
+  - Via Environment Variables: configure `MAX_UPLOAD_SIZE=1000mb` and `SERVER_TIMEOUT_SEC=600` in `.env`.
+  - When hosting behind Nginx / reverse proxies, ensure `client_max_body_size 1000M;` and `proxy_read_timeout 600s;` are set in your Nginx configuration to avoid `499 Client Closed Request` or `413 Payload Too Large` errors.
+
 - **Unified Superuser Login & Version Upload Example (cURL / Bash)**:
   ```bash
   # Step 1: Login as superuser to retrieve high-privilege JWT Bearer token
-  TOKEN=$(curl -s -X POST "https://alsabase.example.com/api/auth/superusers/login" \
+  TOKEN=$(curl -s --connect-timeout 30 --max-time 60 -X POST "https://alsabase.example.com/api/auth/superusers/login" \
     -H "Content-Type: application/json" \
     -d '{"email":"admin@example.com","password":"your-password"}' \
     | grep -o '"token":"[^"]*' | cut -d'"' -f4)
@@ -1310,8 +1315,8 @@ Uploads and publishes a new release version with an attached binary package. Req
   # Step 2: Encode binary installer file to Base64
   FILE_BASE64=$(base64 -w 0 "./dist/MyApp-Setup-1.2.0.exe" 2>/dev/null || base64 "./dist/MyApp-Setup-1.2.0.exe")
 
-  # Step 3: Publish new release version using the Bearer token
-  curl -X POST "https://alsabase.example.com/api/apps/manage/versions" \
+  # Step 3: Publish new release version using the Bearer token with 10-minute timeout
+  curl --connect-timeout 600 --max-time 600 -X POST "https://alsabase.example.com/api/apps/manage/versions" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{

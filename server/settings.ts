@@ -65,6 +65,13 @@ export interface BackupsSettings {
   includeHooks: boolean;
 }
 
+export interface UploadSettings {
+  maxUploadSizeMb: number;
+  requestTimeoutSec: number;
+  keepAliveTimeoutSec: number;
+  headersTimeoutSec: number;
+}
+
 export interface AppSettings {
   batch: BatchSettings;
   ipProxy: IpProxySettings;
@@ -72,6 +79,7 @@ export interface AppSettings {
   rateLimit: RateLimitSettings;
   email: EmailSettings;
   backups: BackupsSettings;
+  uploads: UploadSettings;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -136,6 +144,14 @@ const DEFAULT_SETTINGS: AppSettings = {
     includePublic: true,
     includeHooks: true,
   },
+  uploads: {
+    maxUploadSizeMb:
+      Number(process.env.MAX_UPLOAD_SIZE_MB || process.env.MAX_BODY_SIZE_MB) || 500,
+    requestTimeoutSec:
+      Number(process.env.SERVER_TIMEOUT_SEC || process.env.REQUEST_TIMEOUT_SEC) || 600,
+    keepAliveTimeoutSec: Number(process.env.KEEP_ALIVE_TIMEOUT_SEC) || 120,
+    headersTimeoutSec: Number(process.env.HEADERS_TIMEOUT_SEC) || 125,
+  },
 };
 
 // Initialize SQLite _settings table
@@ -180,6 +196,23 @@ export function getAllSettings(): AppSettings {
   }
 }
 
+export type SettingsChangeCallback = (settings: AppSettings) => void;
+const settingsListeners: SettingsChangeCallback[] = [];
+
+export function onSettingsChange(cb: SettingsChangeCallback) {
+  settingsListeners.push(cb);
+}
+
+export function notifySettingsChange(settings: AppSettings) {
+  for (const cb of settingsListeners) {
+    try {
+      cb(settings);
+    } catch (err) {
+      console.error("[Settings] Error in listener:", err);
+    }
+  }
+}
+
 export function updateSettingsSection<K extends keyof AppSettings>(
   section: K,
   data: Partial<AppSettings[K]>,
@@ -196,7 +229,9 @@ export function updateSettingsSection<K extends keyof AppSettings>(
       updated_at = excluded.updated_at
   `).run(section, JSON.stringify(merged), now);
 
-  return getAllSettings()[section];
+  const updated = getAllSettings();
+  notifySettingsChange(updated);
+  return updated[section];
 }
 
 export function updateAllSettings(partialSettings: Partial<AppSettings>): AppSettings {
@@ -205,7 +240,9 @@ export function updateAllSettings(partialSettings: Partial<AppSettings>): AppSet
       updateSettingsSection(key as keyof AppSettings, val as any);
     }
   }
-  return getAllSettings();
+  const updated = getAllSettings();
+  notifySettingsChange(updated);
+  return updated;
 }
 
 // Extract real client IP based on configured IP proxy headers

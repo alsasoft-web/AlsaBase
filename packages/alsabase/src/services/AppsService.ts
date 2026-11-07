@@ -343,12 +343,13 @@ export class AppsService extends BaseService {
     data: AppVersionUploadOptions,
     options?: CommonOptions
   ): Promise<AppVersionModel> {
-    const { headers, requestKey, ...bodyData } = data;
+    const { headers, requestKey, timeout, ...bodyData } = data;
     return this.send<AppVersionModel>("/api/apps/manage/versions", {
       method: "POST",
       body: bodyData,
       headers: headers || options?.headers,
       requestKey: requestKey || options?.requestKey,
+      timeout: timeout || options?.timeout,
     });
   }
 
@@ -359,7 +360,7 @@ export class AppsService extends BaseService {
    * @param releaseId The version release ID (e.g. 'rel_1234')
    * @param fileData Raw Buffer, Blob, or stream of the installer file
    * @param fileName Name of the file (e.g. 'Setup-1.0.0.exe')
-   * @param options Common request options
+   * @param options Common request options (including timeout)
    */
   async uploadVersionBinary(
     releaseId: string,
@@ -379,6 +380,7 @@ export class AppsService extends BaseService {
           ...(options?.headers || {}),
         },
         requestKey: options?.requestKey,
+        timeout: options?.timeout,
       }
     );
   }

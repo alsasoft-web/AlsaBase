@@ -792,7 +792,8 @@ using System.Threading.Tasks;
 
 public class AlsaBaseReleasePublisher
 {
-    private static readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+    // Generous 10-minute timeout for uploading large application releases
+    private static readonly HttpClient _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
     private const string BaseUrl = "${origin}";
     private const string AppSlug = "${appSlug}";
 
@@ -910,8 +911,9 @@ pub async fn publish_new_version(
     build_number: u32,
     installer_path: &str,
 ) -> Result<(), Box<dyn Error>> {
+    // Generous 10-minute timeout for large application binary uploads
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(600))
         .build()?;
 
     // Step 1: Login to obtain JWT Bearer token
@@ -1001,14 +1003,14 @@ def publish_new_version(
     """
     Complete release workflow in one function:
     1. Authenticates as Superuser / Admin to retrieve the JWT Bearer token.
-    2. Reads the installer binary from disk, encodes it, and publishes the new version.
+    2. Reads the installer binary from disk, encodes it, and publishes the new version with 10-minute timeout.
     """
     print(f"[1/2] Authenticating as superuser ({admin_email})...")
     login_url = f"{BASE_URL}/api/auth/superusers/login"
     login_res = requests.post(
         login_url,
         json={"email": admin_email, "password": admin_password},
-        timeout=15
+        timeout=30
     )
     login_res.raise_for_status()
     token = login_res.json().get("token")
@@ -1044,8 +1046,9 @@ def publish_new_version(
         }
     }
 
+    # Use 10-minute timeout (600s) for uploading large application release packages
     print(f"Uploading and publishing version v{version} to AlsaBase...")
-    upload_res = requests.post(upload_url, headers=headers, json=payload, timeout=120)
+    upload_res = requests.post(upload_url, headers=headers, json=payload, timeout=600)
     upload_res.raise_for_status()
     release = upload_res.json()
 
@@ -1077,7 +1080,7 @@ const APP_SLUG = "${appSlug}";
 /**
  * Complete release publishing workflow:
  * 1. Log in as Superuser to obtain Bearer Token.
- * 2. Read installer file from disk and upload new version release.
+ * 2. Read installer file from disk and upload new version release with generous timeout.
  */
 async function publishNewVersion({
   adminEmail,
@@ -1089,6 +1092,7 @@ async function publishNewVersion({
   platform = "windows",
   isMandatory = true,
   releaseNotes = "New production update",
+  timeoutMs = 600000, // 10-minute timeout for large releases
 }) {
   // Step 1: Authenticate as Superuser / Admin
   console.log(\`[1/2] Authenticating as superuser (\${adminEmail})...\`);
@@ -1112,40 +1116,48 @@ async function publishNewVersion({
   const fileBase64 = fileBuffer.toString("base64");
   const fileName = path.basename(installerPath);
 
-  // Step 3: Publish release to AlsaBase
+  // Step 3: Publish release to AlsaBase with AbortController timeout
   console.log(\`Uploading and publishing version v\${version} to AlsaBase...\`);
-  const uploadRes = await fetch(\`\${BASE_URL}/api/apps/manage/versions\`, {
-    method: "POST",
-    headers: {
-      "Authorization": \`Bearer \${token}\`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      appSlug: APP_SLUG,
-      version,
-      buildNumber,
-      importance: isMandatory ? "automatic" : "optional",
-      channel,
-      platform,
-      releaseNotes,
-      file: {
-        name: fileName,
-        data: \`data:application/octet-stream;base64,\${fileBase64}\`,
-        size: fileBuffer.length,
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const uploadRes = await fetch(\`\${BASE_URL}/api/apps/manage/versions\`, {
+      method: "POST",
+      headers: {
+        "Authorization": \`Bearer \${token}\`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      signal: controller.signal,
+      body: JSON.stringify({
+        appSlug: APP_SLUG,
+        version,
+        buildNumber,
+        importance: isMandatory ? "automatic" : "optional",
+        channel,
+        platform,
+        releaseNotes,
+        file: {
+          name: fileName,
+          data: \`data:application/octet-stream;base64,\${fileBase64}\`,
+          size: fileBuffer.length,
+        },
+      }),
+    });
 
-  if (!uploadRes.ok) {
-    const errorText = await uploadRes.text();
-    throw new Error(\`Release upload failed (\${uploadRes.status}): \${errorText}\`);
+    if (!uploadRes.ok) {
+      const errorText = await uploadRes.text();
+      throw new Error(\`Release upload failed (\${uploadRes.status}): \${errorText}\`);
+    }
+
+    const release = await uploadRes.json();
+    console.log(\`Version v\${version} published successfully!\`);
+    console.log(\`Release ID: \${release.id}\`);
+    console.log(\`Download URL: \${BASE_URL}\${release.downloadUrl}\`);
+    return release;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const release = await uploadRes.json();
-  console.log(\`Version v\${version} published successfully!\`);
-  console.log(\`Release ID: \${release.id}\`);
-  console.log(\`Download URL: \${BASE_URL}\${release.downloadUrl}\`);
-  return release;
 }
 
 // Example Execution:
@@ -1165,8 +1177,8 @@ publishNewVersion({
       return `import AlsaBase from "alsabase";
 import fs from "node:fs";
 
-// Initialize AlsaBase client
-const ab = new AlsaBase("${origin}");
+// Initialize AlsaBase client with 10-minute timeout for large application installer uploads
+const ab = new AlsaBase("${origin}", undefined, { timeout: 600000 });
 
 async function publishRelease() {
   // Step 1: Login as Superuser / Admin (Stores Bearer token in authStore automatically)
@@ -1178,7 +1190,7 @@ async function publishRelease() {
   console.log("[2/2] Reading installer binary...");
   const installerBuffer = fs.readFileSync("./dist/MyApp-Setup-1.2.0.exe");
 
-  // Step 3: Publish new version with attached binary (Both login and upload in one script!)
+  // Step 3: Publish new version with attached binary (Configured with 10-minute timeout)
   console.log("Uploading version release v1.2.0...");
   const release = await ab.apps.uploadVersion({
     appSlug: "${appSlug}",
@@ -1187,6 +1199,7 @@ async function publishRelease() {
     channel: "stable",           // "stable" | "beta" | "alpha" | "latest"
     platform: "windows",          // "windows" | "linux" | "darwin" | "all"
     importance: "automatic",      // "automatic" (mandatory force-update) or "optional"
+    timeout: 600000,             // 10-minute timeout (prevents premature 499 / abort errors)
     releaseNotes: "### What's New in v1.2.0\\n- Realtime database sync engine\\n- Critical security patches",
     file: {
       name: "MyApp-Setup-1.2.0.exe",
@@ -1201,15 +1214,17 @@ async function publishRelease() {
 
   // --------------------------------------------------------------------------
   // Alternative: High-Performance Direct Binary Streaming Upload
-  // (Recommended for large installers > 10MB to eliminate Base64 memory overhead)
+  // (Strongly recommended for large installers >10MB to avoid Base64 memory overhead
+  // and prevent reverse proxy 499 Client Closed Request / 504 timeouts)
   // --------------------------------------------------------------------------
   // const releaseMeta = await ab.apps.uploadVersion({
   //   appSlug: "${appSlug}",
   //   version: "1.2.1",
   //   importance: "optional",
   //   platform: "windows",
+  //   timeout: 600000,
   // });
-  // await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "MyApp-Setup-1.2.1.exe");
+  // await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "MyApp-Setup-1.2.1.exe", { timeout: 600000 });
 }
 
 publishRelease().catch(console.error);`;
@@ -1232,7 +1247,7 @@ INSTALLER_PATH="./dist/MyApp-Setup-1.2.0.exe"
 
 # Step 1: Login to AlsaBase as Superuser to obtain Bearer Token
 echo "[1/3] Logging in as superuser ($ADMIN_EMAIL)..."
-LOGIN_RESPONSE=$(curl -s -X POST "$BASE_URL/api/auth/superusers/login" \\
+LOGIN_RESPONSE=$(curl -s --connect-timeout 30 --max-time 60 -X POST "$BASE_URL/api/auth/superusers/login" \\
   -H "Content-Type: application/json" \\
   -d "{\\"email\\":\\"$ADMIN_EMAIL\\",\\"password\\":\\"$ADMIN_PASSWORD\\"}")
 
@@ -1252,9 +1267,9 @@ FILE_NAME=$(basename "$INSTALLER_PATH")
 FILE_SIZE=$(wc -c < "$INSTALLER_PATH" | tr -d ' ')
 FILE_BASE64=$(base64 -w 0 "$INSTALLER_PATH" 2>/dev/null || base64 "$INSTALLER_PATH")
 
-# Step 3: Publish new release version with attached installer binary
+# Step 3: Publish new release version with attached installer binary (10-minute timeout)
 echo "[3/3] Uploading and publishing version v$VERSION to AlsaBase..."
-RELEASE_RESPONSE=$(curl -s -X POST "$BASE_URL/api/apps/manage/versions" \\
+RELEASE_RESPONSE=$(curl -s --connect-timeout 600 --max-time 600 -X POST "$BASE_URL/api/apps/manage/versions" \\
   -H "Authorization: Bearer $TOKEN" \\
   -H "Content-Type: application/json" \\
   -d "{

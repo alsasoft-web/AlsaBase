@@ -20,15 +20,52 @@ import { rateLimitMiddleware } from "./settings";
 import { setupAutoBackupScheduler } from "./backups";
 import { filesRouter } from "./files";
 import { appsRouter } from "./appsRouter";
+import { getAllSettings, onSettingsChange } from "./settings";
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8090;
 
-// Set generous timeouts for large application installer / binary uploads
-server.setTimeout(600000); // 10 minutes
-server.keepAliveTimeout = 120000; // 2 minutes
-server.headersTimeout = 125000; // 2 minutes 5 seconds
+// Resolve upload and timeout configurations (from env or database settings)
+const initialSettings = getAllSettings();
+
+const initialMaxUploadSize =
+  process.env.MAX_UPLOAD_SIZE ||
+  process.env.MAX_BODY_SIZE ||
+  (process.env.MAX_UPLOAD_SIZE_MB ? `${process.env.MAX_UPLOAD_SIZE_MB}mb` : null) ||
+  `${initialSettings.uploads?.maxUploadSizeMb || 500}mb`;
+
+const initialRequestTimeoutSec =
+  Number(process.env.SERVER_TIMEOUT_SEC || process.env.REQUEST_TIMEOUT_SEC) ||
+  (initialSettings.uploads?.requestTimeoutSec || 600);
+
+const initialKeepAliveSec =
+  Number(process.env.KEEP_ALIVE_TIMEOUT_SEC) ||
+  (initialSettings.uploads?.keepAliveTimeoutSec || 120);
+
+const initialHeadersTimeoutSec =
+  Number(process.env.HEADERS_TIMEOUT_SEC) ||
+  (initialSettings.uploads?.headersTimeoutSec || 125);
+
+function applyServerTimeouts(reqSec: number, keepAliveSec: number, headersSec: number) {
+  server.setTimeout(reqSec * 1000);
+  server.requestTimeout = reqSec * 1000;
+  server.keepAliveTimeout = keepAliveSec * 1000;
+  server.headersTimeout = headersSec * 1000;
+}
+
+applyServerTimeouts(initialRequestTimeoutSec, initialKeepAliveSec, initialHeadersTimeoutSec);
+
+// Reactively apply timeout adjustments when settings are modified via Admin Dashboard or API
+onSettingsChange((settings) => {
+  if (settings.uploads) {
+    applyServerTimeouts(
+      settings.uploads.requestTimeoutSec || 600,
+      settings.uploads.keepAliveTimeoutSec || 120,
+      settings.uploads.headersTimeoutSec || 125
+    );
+  }
+});
 
 // Initialize Socket.IO and WebSocket Realtime Servers
 initSocketIOServer(server);
@@ -42,8 +79,8 @@ setupAutoBackupScheduler();
 
 // Standard Middlewares
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "250mb" }));
-app.use(express.urlencoded({ extended: true, limit: "250mb" }));
+app.use(express.json({ limit: initialMaxUploadSize }));
+app.use(express.urlencoded({ extended: true, limit: initialMaxUploadSize }));
 app.use(authMiddleware);
 app.use(requestLoggerMiddleware);
 app.use(rateLimitMiddleware);
@@ -108,10 +145,6 @@ app.use("/", staticHostingMiddleware());
 
 // Global Error Handler
 app.use(errorHandlerMiddleware);
-
-// Configure HTTP server timeouts for large file uploads (e.g., application releases)
-server.headersTimeout = 120_000;
-server.requestTimeout = 600_000;
 
 server.listen(PORT, () => {
   console.log(`=======================================================`);

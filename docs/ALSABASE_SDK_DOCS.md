@@ -613,7 +613,10 @@ All release management and version publishing operations require superuser authe
 import AlsaBase from "alsabase";
 import fs from "node:fs";
 
-const ab = new AlsaBase("https://alsabase.example.com");
+// Initialize client with custom timeout (default: 0 = no client timeout, recommended: 600000 = 10 min for large releases)
+const ab = new AlsaBase("https://alsabase.example.com", undefined, { timeout: 600000 });
+// Or configure dynamically:
+// ab.timeout = 600000;
 
 // ============================================================================
 // Step 1: Authenticate as Superuser / Admin
@@ -634,6 +637,7 @@ const release = await ab.apps.uploadVersion({
   importance: "automatic", // "automatic" (mandatory force-update) or "optional"
   channel: "stable",       // "stable" | "beta" | "alpha" | "latest"
   platform: "windows",
+  timeout: 600000,         // 10-minute timeout for large binary uploads (overrides client timeout)
   releaseNotes: "### What's New in v1.2.0\n- High performance database sync\n- Realtime connection improvements",
   minOsVersion: "Windows 10",
   isActive: true,
@@ -652,17 +656,20 @@ console.log("Download URL:", ab.apps.getDownloadUrl("desktop-app", "1.2.0"));
 // ============================================================================
 // Step 2b: Direct Binary Streaming Upload (Recommended for large installers >10MB)
 // ============================================================================
-// Avoids 33% Base64 overhead and prevents reverse-proxy 504 Gateway Timeouts:
+// Avoids 33% Base64 overhead and prevents reverse-proxy 499 / 504 Gateway Timeouts:
 const releaseMeta = await ab.apps.uploadVersion({
   appSlug: "desktop-app",
   version: "1.2.1",
   platform: "windows",
   importance: "optional",
   releaseNotes: "High-performance release",
+  timeout: 600000,
 });
 
 // Stream raw installer binary directly to disk:
-await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "MyApp-Setup-1.2.1.exe");
+await ab.apps.uploadVersionBinary(releaseMeta.id, installerBuffer, "MyApp-Setup-1.2.1.exe", {
+  timeout: 600000,
+});
 
 // ============================================================================
 // Step 3: Manage Existing Versions
@@ -676,6 +683,23 @@ await ab.apps.updateVersion(release.id, {
 // Delete version and its storage file
 await ab.apps.deleteVersion(release.id);
 ```
+
+#### Troubleshooting Large Uploads & HTTP 499 ("Client Closed Request")
+
+If uploading a large installer (e.g. 20MB+) fails with **HTTP 499 (Client Closed Request)** or **HTTP 413 (Payload Too Large)**:
+1. **Increase SDK timeout**: Pass `{ timeout: 600000 }` (10 minutes) to `new AlsaBase(..., ..., { timeout: 600000 })` or `uploadVersion({ ..., timeout: 600000 })`.
+2. **Increase AlsaBase server limits**: In the Admin Dashboard (**Settings -> General -> Upload & Timeout Limits**), or set environment variables:
+   ```env
+   MAX_UPLOAD_SIZE=1000mb
+   SERVER_TIMEOUT_SEC=600
+   ```
+3. **Configure Nginx / Reverse Proxy**: If running behind Nginx or Traefik, update the proxy timeouts and body limit in your Nginx configuration:
+   ```nginx
+   client_max_body_size 1000M;
+   proxy_read_timeout 600s;
+   proxy_connect_timeout 600s;
+   proxy_send_timeout 600s;
+   ```
 
 ### Consistent Hardware ID (HWID) Generation
 
