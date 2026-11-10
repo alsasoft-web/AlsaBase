@@ -1672,9 +1672,23 @@ appsRouter.delete("/manage/devices/:id", requireSuperuser, (req: Request, res: R
  */
 appsRouter.get("/manage/logs", requireSuperuser, (req: Request, res: Response) => {
   try {
-    const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
-    const offset = (page - 1) * limit;
+    const isExportAll =
+      req.query.all === "true" ||
+      req.query.all === "1" ||
+      req.query.limit === "all" ||
+      req.query.limit === "-1";
+    let page = Math.max(1, parseInt(req.query.page as string) || 1);
+    let limit = 50;
+    let offset = 0;
+
+    if (isExportAll) {
+      limit = Math.min(100000, Math.max(1, parseInt(req.query.limit as string) || 50000));
+      page = 1;
+      offset = 0;
+    } else {
+      limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50));
+      offset = (page - 1) * limit;
+    }
 
     const whereClauses: string[] = [];
     const params: any[] = [];

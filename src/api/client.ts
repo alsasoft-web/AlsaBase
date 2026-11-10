@@ -955,11 +955,13 @@ export const api = {
       level?: string;
       search?: string;
       includeSuperusers?: boolean;
+      all?: boolean;
     } = {},
   ) {
     const params = new URLSearchParams();
     if (query.page) params.set("page", String(query.page));
     if (query.limit) params.set("limit", String(query.limit));
+    if (query.all) params.set("all", "true");
     if (query.level) params.set("level", query.level);
     if (query.search) params.set("search", query.search);
     if (query.includeSuperusers !== undefined) {
@@ -1393,12 +1395,14 @@ export const api = {
       search?: string;
       deviceId?: string;
       appVersion?: string;
+      all?: boolean;
     },
   ) {
     const searchParams = new URLSearchParams();
     searchParams.append("appId", appIdOrSlug);
     if (params?.page) searchParams.append("page", String(params.page));
     if (params?.limit) searchParams.append("limit", String(params.limit));
+    if (params?.all) searchParams.append("all", "true");
     if (params?.level) searchParams.append("level", params.level);
     if (params?.search) searchParams.append("search", params.search);
     if (params?.deviceId) searchParams.append("deviceId", params.deviceId);

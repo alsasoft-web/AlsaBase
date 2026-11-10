@@ -673,6 +673,7 @@ export class AppsService extends BaseService {
       search?: string;
       deviceId?: string;
       appVersion?: string;
+      all?: boolean;
     },
     options?: CommonOptions
   ): Promise<{

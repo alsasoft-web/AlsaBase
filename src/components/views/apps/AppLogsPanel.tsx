@@ -74,6 +74,10 @@ export const AppLogsPanel: React.FC<AppLogsPanelProps> = ({
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [selectedLogForDetails, setSelectedLogForDetails] = useState<AppLogItem | null>(null);
 
+  // Export / Download Modal State
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
+
   // Upload Modal State (support both internal & external trigger)
   const [internalUploadOpen, setInternalUploadOpen] = useState(false);
   const isUploadModalOpen = externalUploadOpen ?? internalUploadOpen;
@@ -283,25 +287,80 @@ export const AppLogsPanel: React.FC<AppLogsPanelProps> = ({
     }
   };
 
-  const handleExportJSON = () => {
-    if (!appLogs.length) return;
+  const downloadJSONFile = (items: AppLogItem[], filename: string) => {
     const dataStr =
       "data:text/json;charset=utf-8," +
-      encodeURIComponent(JSON.stringify(appLogs, null, 2));
+      encodeURIComponent(JSON.stringify(items, null, 2));
     const downloadAnchor = document.createElement("a");
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute(
-      "download",
-      `${selectedApp.slug}_logs_${Date.now()}.json`
-    );
+    downloadAnchor.setAttribute("download", filename);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+  };
+
+  const handleExportCurrentPage = () => {
+    if (!appLogs.length) {
+      notifications.show({
+        title: "No Logs to Export",
+        message: "The current page has no logs to download.",
+        color: "yellow",
+      });
+      return;
+    }
+    downloadJSONFile(
+      appLogs,
+      `${selectedApp.slug}_logs_page_${page}_${Date.now()}.json`
+    );
+    setExportModalOpen(false);
     notifications.show({
       title: "Logs Exported",
-      message: `Exported ${appLogs.length} logs to JSON file.`,
+      message: `Exported ${appLogs.length} logs (Current Page ${page}) to JSON file.`,
       color: "teal",
     });
+  };
+
+  const handleExportAll = async () => {
+    if (!selectedApp) return;
+    setExportingAll(true);
+    try {
+      const res = await api.getAppLogs(selectedApp.id, {
+        page: 1,
+        limit: 50000,
+        all: true,
+        level: levelFilter !== "ALL" ? levelFilter : undefined,
+        search: search.trim() || undefined,
+        deviceId: deviceFilter !== "ALL" ? deviceFilter : undefined,
+      });
+      const items = res.items || [];
+      if (!items.length) {
+        notifications.show({
+          title: "No Logs to Export",
+          message: "No logs found matching the selected criteria.",
+          color: "yellow",
+        });
+        setExportModalOpen(false);
+        return;
+      }
+      downloadJSONFile(
+        items,
+        `${selectedApp.slug}_logs_all_${Date.now()}.json`
+      );
+      setExportModalOpen(false);
+      notifications.show({
+        title: "All Logs Exported",
+        message: `Successfully exported all ${items.length} logs to JSON file.`,
+        color: "teal",
+      });
+    } catch (err: any) {
+      notifications.show({
+        title: "Export Failed",
+        message: err.message || "Could not fetch all logs.",
+        color: "red",
+      });
+    } finally {
+      setExportingAll(false);
+    }
   };
 
   const handleDeleteSelected = async () => {
@@ -566,12 +625,12 @@ export const AppLogsPanel: React.FC<AppLogsPanelProps> = ({
             Upload Logs
           </Button>
 
-          <Tooltip label="Export to JSON" withArrow>
+          <Tooltip label="Download Logs" withArrow>
             <ActionIcon
               variant="default"
               size="sm"
-              onClick={handleExportJSON}
-              disabled={appLogs.length === 0}
+              onClick={() => setExportModalOpen(true)}
+              disabled={total === 0 && appLogs.length === 0}
             >
               <IconDownload size={14} />
             </ActionIcon>
@@ -1323,6 +1382,167 @@ export const AppLogsPanel: React.FC<AppLogsPanelProps> = ({
             </Group>
           </Stack>
         )}
+      </Modal>
+
+      {/* Download / Export Options Modal */}
+      <Modal
+        opened={exportModalOpen}
+        onClose={() => !exportingAll && setExportModalOpen(false)}
+        title={
+          <Group gap="xs">
+            <IconDownload size={18} color="var(--color-neon-primary, #10e57a)" />
+            <Text fw={700} size="md">
+              Download Application Logs
+            </Text>
+          </Group>
+        }
+        centered
+        radius="md"
+        styles={{
+          header: { backgroundColor: "var(--color-bg-card)" },
+          content: {
+            backgroundColor: "var(--color-bg-card)",
+            border: "1px solid var(--color-border)",
+          },
+        }}
+      >
+        <Stack gap="md">
+          <Text size="xs" c="dimmed">
+            Choose whether to download only the logs currently displayed on this page, or all logs matching your active filters.
+          </Text>
+
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+            <Paper
+              p="md"
+              withBorder
+              style={{
+                backgroundColor: "var(--color-bg-well)",
+                borderColor: "var(--color-border)",
+                cursor: "pointer",
+                borderRadius: 8,
+                transition: "all 0.15s ease",
+              }}
+              onClick={handleExportCurrentPage}
+            >
+              <Stack gap={6} justify="space-between" h="100%">
+                <div>
+                  <Group justify="space-between" align="center" mb={4}>
+                    <Text size="11px" fw={700} c="dimmed">
+                      CURRENT PAGE
+                    </Text>
+                    <Badge size="xs" variant="light" color="blue">
+                      Page {page}
+                    </Badge>
+                  </Group>
+                  <Text size="xl" fw={800}>
+                    {appLogs.length}
+                  </Text>
+                  <Text size="11px" c="dimmed">
+                    Logs on page {page} of {totalPages}
+                  </Text>
+                </div>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="blue"
+                  leftSection={<IconDownload size={13} />}
+                  mt="xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExportCurrentPage();
+                  }}
+                >
+                  Download Page ({appLogs.length})
+                </Button>
+              </Stack>
+            </Paper>
+
+            <Paper
+              p="md"
+              withBorder
+              style={{
+                backgroundColor: "var(--color-bg-well)",
+                borderColor: "var(--color-border)",
+                cursor: "pointer",
+                borderRadius: 8,
+                transition: "all 0.15s ease",
+              }}
+              onClick={handleExportAll}
+            >
+              <Stack gap={6} justify="space-between" h="100%">
+                <div>
+                  <Group justify="space-between" align="center" mb={4}>
+                    <Text size="11px" fw={700} c="dimmed">
+                      ALL LOGS
+                    </Text>
+                    <Badge size="xs" variant="filled" color="teal">
+                      All {totalPages} Pages
+                    </Badge>
+                  </Group>
+                  <Text
+                    size="xl"
+                    fw={800}
+                    style={{ color: "var(--color-neon-primary, #10e57a)" }}
+                  >
+                    {total}
+                  </Text>
+                  <Text size="11px" c="dimmed">
+                    Total records matching filters
+                  </Text>
+                </div>
+                <Button
+                  size="xs"
+                  variant="filled"
+                  style={{
+                    backgroundColor: "var(--color-neon-primary, #10e57a)",
+                    color: "var(--color-neon-text, #052e16)",
+                    fontWeight: 700,
+                  }}
+                  leftSection={<IconDownload size={13} />}
+                  mt="xs"
+                  loading={exportingAll}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleExportAll();
+                  }}
+                >
+                  Download All ({total})
+                </Button>
+              </Stack>
+            </Paper>
+          </SimpleGrid>
+
+          {(levelFilter !== "ALL" || deviceFilter !== "ALL" || search.trim()) && (
+            <Paper
+              p="xs"
+              withBorder
+              style={{
+                backgroundColor: "rgba(255,255,255,0.02)",
+                borderColor: "var(--color-border)",
+                borderRadius: 6,
+              }}
+            >
+              <Text size="11px" c="dimmed">
+                Active filters applied:
+                {levelFilter !== "ALL" && (
+                  <Badge size="xs" ml={6} variant="outline" color="gray">
+                    Level: {levelFilter}
+                  </Badge>
+                )}
+                {deviceFilter !== "ALL" && (
+                  <Badge size="xs" ml={6} variant="outline" color="gray">
+                    Device: {deviceFilter.slice(0, 10)}...
+                  </Badge>
+                )}
+                {search.trim() && (
+                  <Badge size="xs" ml={6} variant="outline" color="gray">
+                    Search: "{search.trim()}"
+                  </Badge>
+                )}
+              </Text>
+            </Paper>
+          )}
+        </Stack>
       </Modal>
     </Box>
   );
