@@ -881,11 +881,11 @@ appsRouter.get("/manage/versions", requireSuperuser, (req: Request, res: Respons
     const params: any[] = [];
 
     if (appId) {
-      sql += ` WHERE app_id = ?`;
-      params.push(appId);
+      sql += ` WHERE (app_id = ? OR app_slug = ?)`;
+      params.push(appId, appId.toLowerCase());
     } else if (appSlug) {
-      sql += ` WHERE app_slug = ?`;
-      params.push(appSlug);
+      sql += ` WHERE (app_slug = ? OR app_id = ?)`;
+      params.push(appSlug.toLowerCase(), appSlug);
     }
 
     sql += ` ORDER BY created_at DESC`;
@@ -1249,11 +1249,11 @@ appsRouter.get("/manage/licenses", requireSuperuser, (req: Request, res: Respons
     const params: any[] = [];
 
     if (appId) {
-      sql += ` AND app_id = ?`;
-      params.push(appId);
+      sql += ` AND (app_id = ? OR app_slug = ?)`;
+      params.push(appId, appId.toLowerCase());
     } else if (appSlug) {
-      sql += ` AND app_slug = ?`;
-      params.push(appSlug.toLowerCase());
+      sql += ` AND (app_slug = ? OR app_id = ?)`;
+      params.push(appSlug.toLowerCase(), appSlug);
     }
 
     if (status && status !== "all") {
@@ -1490,11 +1490,11 @@ appsRouter.get("/manage/devices", requireSuperuser, (req: Request, res: Response
     const params: any[] = [];
 
     if (appId) {
-      sql += ` AND app_id = ?`;
-      params.push(appId);
+      sql += ` AND (app_id = ? OR app_slug = ?)`;
+      params.push(appId, appId.toLowerCase());
     } else if (appSlug) {
-      sql += ` AND app_slug = ?`;
-      params.push(appSlug.toLowerCase());
+      sql += ` AND (app_slug = ? OR app_id = ?)`;
+      params.push(appSlug.toLowerCase(), appSlug);
     }
 
     if (isLocked !== undefined && isLocked !== "" && isLocked !== "all") {

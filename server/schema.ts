@@ -72,8 +72,17 @@ export interface CollectionDef {
   rules: CollectionRule;
   indexes?: string[];
   options?: Record<string, any>;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export function getTableColumnNames(tableName: string): Set<string> {
+  try {
+    const info = db.prepare(`PRAGMA table_info("${sanitizeIdentifier(tableName)}")`).all() as any[];
+    return new Set(info.map((c) => c.name.toLowerCase()));
+  } catch {
+    return new Set();
+  }
 }
 
 function fieldToSqlType(field: FieldDef): string {
@@ -292,14 +301,26 @@ export function createCollection(payload: {
     throw new Error(`Collection with name "${name}" already exists.`);
   }
 
+  const options = payload.options || {};
+  const hasTimestamps = options.timestamps !== false;
   const fields = (payload.fields || []).filter((f) => f.name !== 'tokenKey');
 
-  // Reject duplicate field names within the payload
+  // Reject empty, duplicate, or reserved field names within the payload
   const fieldNamesSeen = new Set<string>();
   for (const f of fields) {
-    const normalized = f.name.trim().toLowerCase();
+    const trimmed = (f.name || '').trim();
+    if (!trimmed) {
+      throw new Error('Column name cannot be empty.');
+    }
+    const normalized = trimmed.toLowerCase();
+    if (normalized === 'id') {
+      throw new Error('Column name "id" is reserved for the primary key.');
+    }
+    if (hasTimestamps && (normalized === 'created_at' || normalized === 'updated_at')) {
+      throw new Error(`Column name "${trimmed}" is reserved when timestamps are enabled. Disable timestamps to use custom "${trimmed}" column.`);
+    }
     if (fieldNamesSeen.has(normalized)) {
-      throw new Error(`Duplicate field name "${f.name}". Each field must have a unique name.`);
+      throw new Error(`Duplicate column name "${trimmed}". Each column must have a unique name.`);
     }
     fieldNamesSeen.add(normalized);
   }
@@ -307,7 +328,6 @@ export function createCollection(payload: {
   const rules = payload.rules || { list: 'public', view: 'public', create: 'auth', update: 'auth', delete: 'admin' };
   const type = payload.type || (name === 'users' ? 'auth' : 'base');
   const indexes = (payload.indexes || []).filter((idx) => !idx.includes('tokenKey'));
-  const options = payload.options || {};
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
@@ -317,11 +337,15 @@ export function createCollection(payload: {
     return `"${colName}" ${fieldToSqlType(f)}`;
   });
 
+  const columnsSql = [
+    'id TEXT PRIMARY KEY',
+    ...(hasTimestamps ? ['created_at TEXT NOT NULL', 'updated_at TEXT NOT NULL'] : []),
+    ...fieldDefsSql,
+  ];
+
   const createTableSql = `
     CREATE TABLE IF NOT EXISTS "${name}" (
-      id TEXT PRIMARY KEY,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL${fieldDefsSql.length > 0 ? ', ' + fieldDefsSql.join(', ') : ''}
+      ${columnsSql.join(',\n      ')}
     );
   `;
 
@@ -536,11 +560,19 @@ export function syncDatabaseCollections() {
         console.log(`[Schema] Discovered unregistered SQLite table "${tableName}". Auto-generating collection metadata...`);
         try {
           const colInfo = db.prepare(`PRAGMA table_info("${tableName}")`).all() as any[];
+          const colNames = colInfo.map((c) => c.name.toLowerCase());
+          const hasCreatedAt = colNames.includes("created_at");
+          const hasUpdatedAt = colNames.includes("updated_at");
+          const hasTimestamps = hasCreatedAt || hasUpdatedAt;
           const fields: FieldDef[] = [];
 
           for (const col of colInfo) {
             const colName = col.name;
-            if (colName === "id" || colName === "created_at" || colName === "updated_at") {
+            const lowerCol = colName.toLowerCase();
+            if (lowerCol === "id") {
+              continue;
+            }
+            if ((hasCreatedAt && lowerCol === "created_at") || (hasUpdatedAt && lowerCol === "updated_at")) {
               continue;
             }
 
@@ -582,7 +614,9 @@ export function syncDatabaseCollections() {
               delete: "",
             },
             indexes: [],
-            options: {},
+            options: {
+              timestamps: hasTimestamps,
+            },
           };
 
           db.prepare(`
@@ -731,18 +765,26 @@ export function updateCollection(
   // Handle new fields to add via ALTER TABLE
   const currentFieldNames = new Set(current.fields.map((f) => f.name.toLowerCase()));
   const newFields = payload.fields || current.fields;
+  const options = payload.options !== undefined ? payload.options : (current.options || {});
+  const hasTimestamps = options.timestamps !== false;
 
-  // Reject duplicate field names in the incoming payload
+  // Reject duplicate or reserved field names in the incoming payload
   if (payload.fields) {
-    const reserved = new Set(['id', 'created_at', 'updated_at']);
     const seen = new Set<string>();
     for (const f of payload.fields) {
-      const normalized = f.name.trim().toLowerCase();
-      if (reserved.has(normalized)) {
-        throw new Error(`Field name "${f.name}" is reserved and cannot be used.`);
+      const trimmed = (f.name || '').trim();
+      if (!trimmed) {
+        throw new Error('Column name cannot be empty.');
+      }
+      const normalized = trimmed.toLowerCase();
+      if (normalized === 'id') {
+        throw new Error('Column name "id" is reserved for the primary key.');
+      }
+      if (hasTimestamps && (normalized === 'created_at' || normalized === 'updated_at')) {
+        throw new Error(`Column name "${trimmed}" is reserved when timestamps are enabled. Disable timestamps to use custom "${trimmed}" column.`);
       }
       if (seen.has(normalized)) {
-        throw new Error(`Duplicate field name "${f.name}". Each field must have a unique name.`);
+        throw new Error(`Duplicate column name "${trimmed}". Each column must have a unique name.`);
       }
       seen.add(normalized);
     }

@@ -61,8 +61,8 @@ export interface CollectionDef {
   rules: CollectionRule;
   indexes?: string[];
   options?: Record<string, any>;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface TableIndexInfo {
@@ -381,43 +381,62 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
     ...options.headers,
   };
 
-  const response = await fetch(`${API_BASE}${url}`, {
-    ...options,
-    headers,
-  });
+  let controller: AbortController | undefined;
+  let timeoutId: any;
+  let signal = options.signal;
 
-  if (!response.ok) {
-    let errorMsg = `Request failed (${response.status})`;
-    try {
-      const errorJson = await response.json();
-      if (errorJson.error) errorMsg = errorJson.error;
-    } catch {
-      // ignore
-    }
-
-    const isAuthRoute =
-      url.startsWith("/auth/superusers/login") ||
-      url.startsWith("/auth/superusers/setup") ||
-      url.startsWith("/auth/superusers/has-initial") ||
-      url.startsWith("/auth/users/login");
-
-    if (
-      !isAuthRoute &&
-      (response.status === 401 ||
-        (response.status === 403 &&
-          (errorMsg.toLowerCase().includes("superuser access required") ||
-            errorMsg.toLowerCase().includes("unauthorized") ||
-            errorMsg.toLowerCase().includes("token") ||
-            errorMsg.toLowerCase().includes("forbidden"))))
-    ) {
-      api.logout();
-      window.dispatchEvent(new CustomEvent("alsabase_unauthorized"));
-    }
-
-    throw new Error(errorMsg);
+  if (!signal) {
+    controller = new AbortController();
+    signal = controller.signal;
+    const isUpload = url.includes("/upload") || (options.body && typeof options.body !== "string");
+    const timeoutMs = isUpload ? 10 * 60 * 1000 : 30 * 1000;
+    timeoutId = setTimeout(() => {
+      controller?.abort(new Error("Request timed out"));
+    }, timeoutMs);
   }
 
-  return response.json();
+  try {
+    const response = await fetch(`${API_BASE}${url}`, {
+      ...options,
+      headers,
+      signal,
+    });
+
+    if (!response.ok) {
+      let errorMsg = `Request failed (${response.status})`;
+      try {
+        const errorJson = await response.json();
+        if (errorJson.error) errorMsg = errorJson.error;
+      } catch {
+        // ignore
+      }
+
+      const isAuthRoute =
+        url.startsWith("/auth/superusers/login") ||
+        url.startsWith("/auth/superusers/setup") ||
+        url.startsWith("/auth/superusers/has-initial") ||
+        url.startsWith("/auth/users/login");
+
+      if (
+        !isAuthRoute &&
+        (response.status === 401 ||
+          (response.status === 403 &&
+            (errorMsg.toLowerCase().includes("superuser access required") ||
+              errorMsg.toLowerCase().includes("unauthorized") ||
+              errorMsg.toLowerCase().includes("token") ||
+              errorMsg.toLowerCase().includes("forbidden"))))
+      ) {
+        api.logout();
+        window.dispatchEvent(new CustomEvent("alsabase_unauthorized"));
+      }
+
+      throw new Error(errorMsg);
+    }
+
+    return response.json();
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 export const api = {

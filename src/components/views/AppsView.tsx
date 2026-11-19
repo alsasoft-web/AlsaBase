@@ -227,19 +227,20 @@ export const AppsView: React.FC = () => {
   const loadLicenses = async () => {
     if (!selectedApp) {
       setLicenses([]);
+      setLoadingLicenses(false);
       return;
     }
     setLoadingLicenses(true);
     try {
-      const res = await api.getAppLicenses(selectedApp.id, {
+      const res = await api.getAppLicenses(selectedApp.id || selectedApp.slug, {
         search: licenseSearch.trim() || undefined,
         status: licenseStatusFilter && licenseStatusFilter !== "all" ? licenseStatusFilter : undefined,
       });
-      setLicenses(res.items || []);
+      setLicenses(res?.items || []);
     } catch (err: any) {
       notifications.show({
         title: "Error loading licenses",
-        message: err.message,
+        message: err.message || "Failed to load licenses",
         color: "red",
       });
     } finally {
@@ -251,6 +252,7 @@ export const AppsView: React.FC = () => {
   const loadDevices = async () => {
     if (!selectedApp) {
       setDevices([]);
+      setLoadingDevices(false);
       return;
     }
     setLoadingDevices(true);
@@ -261,15 +263,15 @@ export const AppsView: React.FC = () => {
           : deviceLockedFilter === "allowed"
           ? false
           : undefined;
-      const res = await api.getAppDevices(selectedApp.id, {
+      const res = await api.getAppDevices(selectedApp.id || selectedApp.slug, {
         search: deviceSearch.trim() || undefined,
         isLocked: isLockedParam,
       });
-      setDevices(res.items || []);
+      setDevices(res?.items || []);
     } catch (err: any) {
       notifications.show({
         title: "Error loading devices",
-        message: err.message,
+        message: err.message || "Failed to load devices",
         color: "red",
       });
     } finally {
@@ -1688,11 +1690,21 @@ export const AppsView: React.FC = () => {
                         size="xs"
                         variant="subtle"
                         color="gray"
-                        leftSection={<IconRefresh size={14} />}
-                        onClick={loadVersions}
-                        loading={loadingVersions}
+                        leftSection={
+                          <IconRefresh
+                            size={14}
+                            className={loadingVersions ? "alsabase-spin" : undefined}
+                          />
+                        }
+                        onClick={() => {
+                          if (!loadingVersions) {
+                            loadVersions();
+                            if (selectedApp) loadApps(selectedApp.id);
+                          }
+                        }}
+                        disabled={loadingVersions}
                       >
-                        Refresh
+                        {loadingVersions ? "Refreshing..." : "Refresh"}
                       </Button>
                     </Group>
                   </Group>
@@ -1984,11 +1996,21 @@ export const AppsView: React.FC = () => {
                         size="xs"
                         variant="subtle"
                         color="gray"
-                        leftSection={<IconRefresh size={14} />}
-                        onClick={loadLicenses}
-                        loading={loadingLicenses}
+                        leftSection={
+                          <IconRefresh
+                            size={14}
+                            className={loadingLicenses ? "alsabase-spin" : undefined}
+                          />
+                        }
+                        onClick={() => {
+                          if (!loadingLicenses) {
+                            loadLicenses();
+                            if (selectedApp) loadApps(selectedApp.id);
+                          }
+                        }}
+                        disabled={loadingLicenses}
                       >
-                        Refresh
+                        {loadingLicenses ? "Refreshing..." : "Refresh"}
                       </Button>
                       <Button
                         size="xs"
@@ -2348,11 +2370,21 @@ export const AppsView: React.FC = () => {
                         size="xs"
                         variant="subtle"
                         color="gray"
-                        leftSection={<IconRefresh size={14} />}
-                        onClick={loadDevices}
-                        loading={loadingDevices}
+                        leftSection={
+                          <IconRefresh
+                            size={14}
+                            className={loadingDevices ? "alsabase-spin" : undefined}
+                          />
+                        }
+                        onClick={() => {
+                          if (!loadingDevices) {
+                            loadDevices();
+                            if (selectedApp) loadApps(selectedApp.id);
+                          }
+                        }}
+                        disabled={loadingDevices}
                       >
-                        Refresh
+                        {loadingDevices ? "Refreshing..." : "Refresh"}
                       </Button>
                       <Button
                         size="xs"

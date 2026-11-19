@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db, hashPassword, verifyPassword } from './db';
-import { getCollection, listCollections, createCollection, updateCollection, deleteCollection, sanitizeIdentifier, FieldDef, getTableIndexes, createTableIndex, dropTableIndex } from './schema';
+import { getCollection, listCollections, createCollection, updateCollection, deleteCollection, sanitizeIdentifier, FieldDef, getTableIndexes, createTableIndex, dropTableIndex, getTableColumnNames } from './schema';
 import { AuthPayload, requireSuperuser, generateToken, requireAuth, authRouter, recordFailedOtpAttempt, clearFailedOtpAttempts } from './auth';
 import { broadcastRecordEvent } from './events';
 import { saveRecordFile, deleteRecordFiles, deleteCollectionFiles, FILES_DIR } from './files';
@@ -211,12 +211,21 @@ export function parseFilterExpression(
   const trimmed = filterStr.trim();
   if (!trimmed) return {};
 
+  const tableCols = getTableColumnNames(col.name);
   const validColMap = new Map<string, string>();
   validColMap.set('id', 'id');
-  validColMap.set('created_at', 'created_at');
-  validColMap.set('updated_at', 'updated_at');
-  validColMap.set('created', 'created_at');
-  validColMap.set('updated', 'updated_at');
+  if (tableCols.has('created_at')) {
+    validColMap.set('created_at', 'created_at');
+    if (!col.fields?.some((f: any) => f.name.toLowerCase() === 'created')) {
+      validColMap.set('created', 'created_at');
+    }
+  }
+  if (tableCols.has('updated_at')) {
+    validColMap.set('updated_at', 'updated_at');
+    if (!col.fields?.some((f: any) => f.name.toLowerCase() === 'updated')) {
+      validColMap.set('updated', 'updated_at');
+    }
+  }
   for (const f of col.fields || []) {
     validColMap.set(f.name.toLowerCase(), f.name);
   }
@@ -390,8 +399,9 @@ export function formatRecordOutput(
   delete formatted.password_hash;
   delete formatted.tokenKey;
 
-  if (!formatted.created && formatted.created_at) formatted.created = formatted.created_at;
-  if (!formatted.updated && formatted.updated_at) formatted.updated = formatted.updated_at;
+  const userFieldNames = new Set(fields.map((f) => f.name.toLowerCase()));
+  if (!formatted.created && formatted.created_at && !userFieldNames.has('created')) formatted.created = formatted.created_at;
+  if (!formatted.updated && formatted.updated_at && !userFieldNames.has('updated')) formatted.updated = formatted.updated_at;
 
   const rowKeys = Object.keys(row);
 
@@ -683,16 +693,30 @@ collectionsRouter.get('/:collection/records', (req: Request, res: Response) => {
     const offset = (page - 1) * limit;
 
     // Sorting
-    const sortParam = (req.query.sort as string) || '-created_at';
+    const tableCols = getTableColumnNames(col.name);
+    const hasCreatedAt = tableCols.has('created_at');
+    const hasUpdatedAt = tableCols.has('updated_at');
+
+    const defaultSortParam = hasCreatedAt ? '-created_at' : (tableCols.has('id') ? '-id' : '');
+    const sortParam = (req.query.sort as string) || defaultSortParam;
     const isDesc = sortParam.startsWith('-');
     let rawSortField = sortParam.replace(/^[-+]/, '');
-    if (rawSortField === 'created') rawSortField = 'created_at';
-    if (rawSortField === 'updated') rawSortField = 'updated_at';
-    let sortField = 'created_at';
+
+    if (rawSortField === 'created' && hasCreatedAt && !col.fields.some((f) => f.name.toLowerCase() === 'created')) {
+      rawSortField = 'created_at';
+    }
+    if (rawSortField === 'updated' && hasUpdatedAt && !col.fields.some((f) => f.name.toLowerCase() === 'updated')) {
+      rawSortField = 'updated_at';
+    }
+
+    let sortField = hasCreatedAt ? 'created_at' : (tableCols.has('id') ? 'id' : 'rowid');
     try {
-      sortField = sanitizeIdentifier(rawSortField);
+      const sanitized = sanitizeIdentifier(rawSortField);
+      if (tableCols.has(sanitized.toLowerCase()) || sanitized.toLowerCase() === 'id' || sanitized.toLowerCase() === 'rowid') {
+        sortField = sanitized;
+      }
     } catch {
-      sortField = 'created_at';
+      // keep fallback sortField
     }
     const sortOrder = isDesc ? 'DESC' : 'ASC';
 
@@ -764,11 +788,12 @@ collectionsRouter.get('/:collection/records', (req: Request, res: Response) => {
         LIMIT ? OFFSET ?
       `).all(...params, limit, offset) as any[];
     } catch {
-      // Fallback order by created_at DESC in case sort column is invalid on SQLite
+      // Fallback order by created_at DESC or id DESC in case sort column is invalid on SQLite
+      const fallbackSortCol = hasCreatedAt ? 'created_at' : (tableCols.has('id') ? 'id' : 'rowid');
       rows = db.prepare(`
         SELECT * FROM "${col.name}"
         ${whereSql}
-        ORDER BY "created_at" DESC
+        ORDER BY "${fallbackSortCol}" DESC
         LIMIT ? OFFSET ?
       `).all(...params, limit, offset) as any[];
     }
@@ -884,18 +909,36 @@ collectionsRouter.post('/:collection/records', (req: Request, res: Response) => 
     return res.status(400).json({ error: fileErr.message });
   }
 
-  const fieldNames = ['id', 'created_at', 'updated_at'];
-  const placeholders = ['?', '?', '?'];
-  const values: any[] = [id, now, now];
+  const tableCols = getTableColumnNames(col.name);
+  const hasCreatedAt = tableCols.has('created_at');
+  const hasUpdatedAt = tableCols.has('updated_at');
+
+  const fieldNames: string[] = ['id'];
+  const placeholders: string[] = ['?'];
+  const values: any[] = [id];
+
+  if (hasCreatedAt) {
+    fieldNames.push('created_at');
+    placeholders.push('?');
+    values.push(now);
+  }
+  if (hasUpdatedAt) {
+    fieldNames.push('updated_at');
+    placeholders.push('?');
+    values.push(now);
+  }
 
   for (const field of col.fields) {
     if (field.required && (bodyData[field.name] === undefined || bodyData[field.name] === null || bodyData[field.name] === '')) {
       return res.status(400).json({ error: `Field '${field.name}' is required` });
     }
     if (bodyData[field.name] !== undefined) {
-      fieldNames.push(`"${field.name}"`);
-      placeholders.push('?');
-      values.push(formatFieldValue(field, bodyData[field.name]));
+      const colIdent = sanitizeIdentifier(field.name.trim().toLowerCase());
+      if (tableCols.has(colIdent)) {
+        fieldNames.push(`"${colIdent}"`);
+        placeholders.push('?');
+        values.push(formatFieldValue(field, bodyData[field.name]));
+      }
     }
   }
 
@@ -1005,14 +1048,31 @@ collectionsRouter.patch('/:collection/records/:id', (req: Request, res: Response
     return res.status(400).json({ error: fileErr.message });
   }
 
-  const updates: string[] = ['"updated_at" = ?'];
-  const values: any[] = [now];
+  const tableCols = getTableColumnNames(col.name);
+  const hasUpdatedAt = tableCols.has('updated_at');
+
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  if (hasUpdatedAt) {
+    updates.push('"updated_at" = ?');
+    values.push(now);
+  }
 
   for (const field of col.fields) {
     if (bodyData[field.name] !== undefined) {
-      updates.push(`"${field.name}" = ?`);
-      values.push(formatFieldValue(field, bodyData[field.name]));
+      const colIdent = sanitizeIdentifier(field.name.trim().toLowerCase());
+      if (tableCols.has(colIdent)) {
+        updates.push(`"${colIdent}" = ?`);
+        values.push(formatFieldValue(field, bodyData[field.name]));
+      }
     }
+  }
+
+  if (updates.length === 0) {
+    const updated = db.prepare(`SELECT * FROM "${col.name}" WHERE id = ?`).get(recordId) as any;
+    const formatted = formatRecordOutput(col.fields, updated, auth, isAuth);
+    return res.json(formatted);
   }
 
   values.push(recordId);

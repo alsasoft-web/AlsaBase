@@ -354,9 +354,16 @@ Creates a new collection schema and underlying SQLite table.
     "rules": {
       "list": "",
       "view": ""
+    },
+    "options": {
+      "timestamps": true
     }
   }
   ```
+- **Validation Rules**:
+  - Each column in `fields` must have a unique name (case-insensitive deduplication). Duplicate column names return a `400 Bad Request` error.
+  - Column name `"id"` is reserved for the primary key.
+  - Setting `"options": { "timestamps": false }` disables automatic creation of `created_at` and `updated_at` columns, allowing tables without timestamps. When timestamps are enabled (default), `"created_at"` and `"updated_at"` are reserved system columns.
 
 ### `PATCH /api/collections/:name`
 
@@ -1371,7 +1378,7 @@ Updates release metadata (importance, channel, active status, release notes).
 Deletes a release record and removes its physical binary file from storage.
 
 #### `GET /api/apps/manage/licenses`
-Lists issued licenses for an app with optional `?appId=...`, `?status=...`, and `?search=...`.
+Lists issued licenses for an app with optional `?appId=...` (accepts app ID or slug), `?status=...`, and `?search=...`.
 
 #### `POST /api/apps/manage/licenses`
 Generates single or batch license keys with custom format, activation limit, and expiration.
@@ -1396,7 +1403,7 @@ Updates a license's status (`active`, `revoked`, `suspended`, `expired`), custom
 Permanently deletes a license and unbinds all associated client devices.
 
 #### `GET /api/apps/manage/devices`
-Lists registered devices / PCs for an application with optional `?appId=...`, `?isLocked=true|false`, and `?search=...`.
+Lists registered devices / PCs for an application with optional `?appId=...` (accepts app ID or slug), `?isLocked=true|false`, and `?search=...`.
 
 #### `POST /api/apps/manage/devices/lock`
 Pre-bans or locks a client hardware ID with a custom lock reason.

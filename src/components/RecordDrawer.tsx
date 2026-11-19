@@ -17,7 +17,8 @@ import {
   FileInput,
   Badge,
   Paper,
-  Divider
+  Divider,
+  ScrollArea
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import {
@@ -284,13 +285,21 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
         content: {
           backgroundColor: 'var(--color-bg-base)',
           borderLeft: '1px solid var(--color-border)',
-          boxShadow: '-10px 0 30px rgba(0, 0, 0, 0.4)'
+          boxShadow: '-10px 0 30px rgba(0, 0, 0, 0.4)',
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100vh',
+          maxHeight: '100vh',
+          overflow: 'hidden'
         },
         body: {
           padding: 0,
           display: 'flex',
           flexDirection: 'column',
-          height: '100vh',
+          flex: 1,
+          height: '100%',
+          maxHeight: '100vh',
+          overflow: 'hidden',
           backgroundColor: 'var(--color-bg-base)'
         }
       }}
@@ -304,7 +313,8 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
           backgroundColor: 'var(--color-bg-surface)',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center'
+          alignItems: 'center',
+          flexShrink: 0
         }}
       >
         <Group gap="sm" align="center">
@@ -390,8 +400,9 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
       </Box>
 
       {/* Main Scrollable Form Body */}
-      <Box style={{ flex: 1, overflowY: 'auto' }} p="lg">
-        <Stack gap="md">
+      <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbars="y" type="auto">
+        <Box p="lg">
+          <Stack gap="md">
           {/* Record ID Box (Editing) */}
           {isEditing && (
             <Paper
@@ -623,7 +634,7 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
           {fieldsList
             .filter(
               (f: FieldDef) =>
-                !['id', 'created', 'updated', 'created_at', 'updated_at', 'tokenKey', 'password'].includes(
+                !['id', 'created_at', 'updated_at', 'tokenKey', 'password'].includes(
                   f.name
                 ) && (!isAuth || !['email', 'emailVisibility', 'verified'].includes(f.name))
             )
@@ -958,6 +969,7 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
             })}
         </Stack>
       </Box>
+    </ScrollArea>
 
       {/* Drawer Actions Footer */}
       <Box
@@ -968,7 +980,8 @@ export const RecordDrawer: React.FC<RecordDrawerProps> = ({
           backgroundColor: 'var(--color-bg-surface)',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center'
+          alignItems: 'center',
+          flexShrink: 0
         }}
       >
         <Button

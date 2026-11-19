@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Group,
   Text,
@@ -245,7 +245,8 @@ export const CollectionsView: React.FC = () => {
   const handleSelectCollection = (col: CollectionDef) => {
     setSelectedCollection(col);
     setSelectedRecordIds([]);
-    setSortField("created_at");
+    const hasTimestamps = col.options?.timestamps !== false;
+    setSortField(hasTimestamps ? "created_at" : "id");
     setSortDirection("desc");
     setRecordPage(1);
     setRecordFilter("");
@@ -254,6 +255,40 @@ export const CollectionsView: React.FC = () => {
     setBuilderCol("id");
     localStorage.setItem("alsabase_selected_col", col.name);
   };
+
+  const visibleFields: FieldDef[] = useMemo(() => {
+    if (!selectedCollection) return [];
+    const seen = new Set<string>();
+    return selectedCollection.fields.filter((f: FieldDef) => {
+      if (f.hidden || ["password", "tokenKey"].includes(f.name)) return false;
+      const norm = (f.name || "").trim().toLowerCase();
+      if (!norm || seen.has(norm)) return false; // Deduplicate so duplicate column names are never rendered
+      seen.add(norm);
+      return true;
+    });
+  }, [selectedCollection]);
+
+  const hasCollectionTimestamps = useMemo(() => {
+    if (!selectedCollection) return false;
+    return selectedCollection.options?.timestamps !== false;
+  }, [selectedCollection]);
+
+  const hasCustomCreated = useMemo(() => {
+    return visibleFields.some((f: FieldDef) => {
+      const lower = (f.name || "").trim().toLowerCase();
+      return lower === "created" || lower === "created_at";
+    });
+  }, [visibleFields]);
+
+  const hasCustomUpdated = useMemo(() => {
+    return visibleFields.some((f: FieldDef) => {
+      const lower = (f.name || "").trim().toLowerCase();
+      return lower === "updated" || lower === "updated_at";
+    });
+  }, [visibleFields]);
+
+  const shouldShowSystemCreatedAt = hasCollectionTimestamps && !hasCustomCreated;
+  const shouldShowSystemUpdatedAt = hasCollectionTimestamps && !hasCustomUpdated;
 
   const handleSort = (field: string) => {
     const isCurrent =
@@ -380,9 +415,11 @@ export const CollectionsView: React.FC = () => {
   ) => {
     setLoading(true);
     try {
+      const hasTimestamps = col.options?.timestamps !== false;
+      const fallbackSort = hasTimestamps ? "-created_at" : "-id";
       const sortParam = currentSortField
         ? `${currentSortDir === "desc" ? "-" : "+"}${currentSortField}`
-        : "-created_at";
+        : fallbackSort;
       const res = await api.listRecords(col.name, {
         page,
         limit: limitVal,
@@ -445,6 +482,7 @@ export const CollectionsView: React.FC = () => {
       allowOtpAuth: false,
       allowMfa: false,
       allowUsernameAuth: true,
+      timestamps: true,
       oauth2: {
         providers: DEFAULT_OAUTH2_PROVIDERS,
       },
@@ -508,6 +546,7 @@ export const CollectionsView: React.FC = () => {
       allowOtpAuth: false,
       allowMfa: false,
       allowUsernameAuth: true,
+      timestamps: existingOptions.timestamps !== false,
       ...existingOptions,
       oauth2: {
         providers: getMergedOAuth2Providers(existingOptions.oauth2?.providers),
@@ -533,16 +572,42 @@ export const CollectionsView: React.FC = () => {
     }
 
     const cleanFields = fields.filter((f) => f.name !== "tokenKey");
+    const hasTimestamps = collectionOptions.timestamps !== false;
 
-    // Check for duplicate field names before submitting
+    // Strict validation: No empty names, no duplicates, no reserved names
     const fieldNamesSeen = new Set<string>();
-    for (const f of cleanFields) {
-      const normalized = f.name.trim().toLowerCase();
-      if (!normalized) continue;
+    for (let i = 0; i < cleanFields.length; i++) {
+      const f = cleanFields[i];
+      const trimmed = (f.name || "").trim();
+      if (!trimmed) {
+        notifications.show({
+          title: "Validation Error",
+          message: `Field #${i + 1} has an empty name. Each column must have a name.`,
+          color: "red",
+        });
+        return;
+      }
+      const normalized = trimmed.toLowerCase();
+      if (normalized === "id") {
+        notifications.show({
+          title: "Reserved Column Name",
+          message: `Column name "id" is reserved for the record primary key.`,
+          color: "red",
+        });
+        return;
+      }
+      if (hasTimestamps && (normalized === "created_at" || normalized === "updated_at")) {
+        notifications.show({
+          title: "Reserved Column Name",
+          message: `Column name "${trimmed}" is reserved for system timestamps. Uncheck "Include Timestamps" if you wish to use custom "${trimmed}" column.`,
+          color: "red",
+        });
+        return;
+      }
       if (fieldNamesSeen.has(normalized)) {
         notifications.show({
-          title: "Duplicate Field Name",
-          message: `Field name "${f.name}" is used more than once. Each field must have a unique name.`,
+          title: "Duplicate Column Name",
+          message: `Duplicate column name "${trimmed}". Two columns cannot have the same name.`,
           color: "red",
         });
         return;
@@ -1916,12 +1981,12 @@ export const CollectionsView: React.FC = () => {
                           onChange={(val) => setBuilderCol(val || "id")}
                           data={[
                             { label: "id", value: "id" },
-                            ...selectedCollection.fields.map((f) => ({
+                            ...visibleFields.map((f: FieldDef) => ({
                               label: f.name,
                               value: f.name,
                             })),
-                            { label: "created", value: "created_at" },
-                            { label: "updated", value: "updated_at" },
+                            ...(shouldShowSystemCreatedAt ? [{ label: "created", value: "created_at" }] : []),
+                            ...(shouldShowSystemUpdatedAt ? [{ label: "updated", value: "updated_at" }] : []),
                           ]}
                           styles={{
                             input: {
@@ -2240,141 +2305,139 @@ export const CollectionsView: React.FC = () => {
                               {renderSortIcon("id")}
                             </Group>
                           </Table.Th>
-                          {selectedCollection.fields
-                            .filter(
-                              (f) =>
-                                !f.hidden &&
-                                !["password", "tokenKey"].includes(f.name)
-                            )
-                            .map((f) => (
-                              <Table.Th
-                                key={f.name}
-                                style={{
-                                  cursor: "pointer",
-                                  userSelect: "none",
-                                  whiteSpace: "nowrap",
-                                }}
-                                onClick={() => handleSort(f.name)}
-                                title={`Sort by ${f.name}`}
-                              >
-                                <Group gap={5} wrap="nowrap" justify="space-between">
-                                  <Group gap={5} wrap="nowrap">
-                                    {getFieldIcon(f.type, f.name)}
-                                    <Text
+                          {visibleFields.map((f: FieldDef) => (
+                            <Table.Th
+                              key={f.name}
+                              style={{
+                                cursor: "pointer",
+                                userSelect: "none",
+                                whiteSpace: "nowrap",
+                              }}
+                              onClick={() => handleSort(f.name)}
+                              title={`Sort by ${f.name}`}
+                            >
+                              <Group gap={5} wrap="nowrap" justify="space-between">
+                                <Group gap={5} wrap="nowrap">
+                                  {getFieldIcon(f.type, f.name)}
+                                  <Text
+                                    size="xs"
+                                    c={
+                                      sortField === f.name
+                                        ? "var(--color-neon-primary)"
+                                        : "dimmed"
+                                    }
+                                    fw={sortField === f.name ? 800 : 700}
+                                    style={{
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.05em",
+                                      fontSize: "11px",
+                                    }}
+                                  >
+                                    {f.name}
+                                  </Text>
+                                  {f.unique && (
+                                    <Badge
                                       size="xs"
-                                      c={
-                                        sortField === f.name
-                                          ? "var(--color-neon-primary)"
-                                          : "dimmed"
-                                      }
-                                      fw={sortField === f.name ? 800 : 700}
+                                      variant="outline"
+                                      color="blue"
                                       style={{
-                                        textTransform: "uppercase",
-                                        letterSpacing: "0.05em",
-                                        fontSize: "11px",
+                                        height: 16,
+                                        fontSize: "9px",
+                                        padding: "0 4px",
+                                        borderWidth: 1,
+                                        textTransform: "lowercase",
                                       }}
                                     >
-                                      {f.name}
-                                    </Text>
-                                    {f.unique && (
-                                      <Badge
-                                        size="xs"
-                                        variant="outline"
-                                        color="blue"
-                                        style={{
-                                          height: 16,
-                                          fontSize: "9px",
-                                          padding: "0 4px",
-                                          borderWidth: 1,
-                                          textTransform: "lowercase",
-                                        }}
-                                      >
-                                        unique
-                                      </Badge>
-                                    )}
-                                  </Group>
-                                  {renderSortIcon(f.name)}
+                                      unique
+                                    </Badge>
+                                  )}
                                 </Group>
-                              </Table.Th>
-                            ))}
-                          <Table.Th
-                            style={{
-                              width: 130,
-                              cursor: "pointer",
-                              userSelect: "none",
-                              whiteSpace: "nowrap",
-                            }}
-                            onClick={() => handleSort("created_at")}
-                            title="Sort by Created"
-                          >
-                            <Group gap={4} wrap="nowrap" justify="space-between">
-                              <Group gap={4} wrap="nowrap">
-                                <IconCalendar size={13} color="#a855f7" />
-                                <Text
-                                  size="xs"
-                                  c={
-                                    sortField === "created_at" ||
-                                    sortField === "created"
-                                      ? "var(--color-neon-primary)"
-                                      : "dimmed"
-                                  }
-                                  fw={
-                                    sortField === "created_at" ||
-                                    sortField === "created"
-                                      ? 800
-                                      : 700
-                                  }
-                                  style={{
-                                    textTransform: "uppercase",
-                                    letterSpacing: "0.05em",
-                                    fontSize: "11px",
-                                  }}
-                                >
-                                  created
-                                </Text>
+                                {renderSortIcon(f.name)}
                               </Group>
-                              {renderSortIcon("created_at")}
-                            </Group>
-                          </Table.Th>
-                          <Table.Th
-                            style={{
-                              width: 130,
-                              cursor: "pointer",
-                              userSelect: "none",
-                              whiteSpace: "nowrap",
-                            }}
-                            onClick={() => handleSort("updated_at")}
-                            title="Sort by Updated"
-                          >
-                            <Group gap={4} wrap="nowrap" justify="space-between">
-                              <Group gap={4} wrap="nowrap">
-                                <IconClock size={13} color="#ec4899" />
-                                <Text
-                                  size="xs"
-                                  c={
-                                    sortField === "updated_at" ||
-                                    sortField === "updated"
-                                      ? "var(--color-neon-primary)"
-                                      : "dimmed"
-                                  }
-                                  fw={
-                                    sortField === "updated_at" ||
-                                    sortField === "updated"
-                                      ? 800
-                                      : 700
-                                  }
-                                  style={{
-                                    textTransform: "uppercase",
-                                    letterSpacing: "0.05em",
-                                    fontSize: "11px",
-                                  }}
-                                >
-                                  updated
-                                </Text>
+                            </Table.Th>
+                          ))}
+                          {shouldShowSystemCreatedAt && (
+                            <Table.Th
+                              style={{
+                                width: 130,
+                                cursor: "pointer",
+                                userSelect: "none",
+                                whiteSpace: "nowrap",
+                              }}
+                              onClick={() => handleSort("created_at")}
+                              title="Sort by Created"
+                            >
+                              <Group gap={4} wrap="nowrap" justify="space-between">
+                                <Group gap={4} wrap="nowrap">
+                                  <IconCalendar size={13} color="#a855f7" />
+                                  <Text
+                                    size="xs"
+                                    c={
+                                      sortField === "created_at" ||
+                                      sortField === "created"
+                                        ? "var(--color-neon-primary)"
+                                        : "dimmed"
+                                    }
+                                    fw={
+                                      sortField === "created_at" ||
+                                      sortField === "created"
+                                        ? 800
+                                        : 700
+                                    }
+                                    style={{
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.05em",
+                                      fontSize: "11px",
+                                    }}
+                                  >
+                                    created
+                                  </Text>
+                                </Group>
+                                {renderSortIcon("created_at")}
                               </Group>
-                              {renderSortIcon("updated_at")}
-                            </Group>
-                          </Table.Th>
+                            </Table.Th>
+                          )}
+                          {shouldShowSystemUpdatedAt && (
+                            <Table.Th
+                              style={{
+                                width: 130,
+                                cursor: "pointer",
+                                userSelect: "none",
+                                whiteSpace: "nowrap",
+                              }}
+                              onClick={() => handleSort("updated_at")}
+                              title="Sort by Updated"
+                            >
+                              <Group gap={4} wrap="nowrap" justify="space-between">
+                                <Group gap={4} wrap="nowrap">
+                                  <IconClock size={13} color="#ec4899" />
+                                  <Text
+                                    size="xs"
+                                    c={
+                                      sortField === "updated_at" ||
+                                      sortField === "updated"
+                                        ? "var(--color-neon-primary)"
+                                        : "dimmed"
+                                    }
+                                    fw={
+                                      sortField === "updated_at" ||
+                                      sortField === "updated"
+                                        ? 800
+                                        : 700
+                                    }
+                                    style={{
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.05em",
+                                      fontSize: "11px",
+                                    }}
+                                  >
+                                    updated
+                                  </Text>
+                                </Group>
+                                {renderSortIcon("updated_at")}
+                              </Group>
+                            </Table.Th>
+                          )}
                           <Table.Th style={{ width: 50, textAlign: "right" }}>
                             <Text size="xs" c="dimmed" fw={700}>
                               Action
@@ -2458,13 +2521,7 @@ export const CollectionsView: React.FC = () => {
                                 </Tooltip>
                               </Table.Td>
 
-                              {selectedCollection.fields
-                                .filter(
-                                  (f) =>
-                                    !f.hidden &&
-                                    !["password", "tokenKey"].includes(f.name)
-                                )
-                                .map((f) => {
+                              {visibleFields.map((f: FieldDef) => {
                                   const isFileOrAvatar =
                                     f.type === "file" || f.name === "avatar";
 
@@ -2655,7 +2712,8 @@ export const CollectionsView: React.FC = () => {
                                     return (
                                       <Table.Td key={f.name}>
                                         <Code
-                                          onClick={() => {
+                                          onClick={(e) => {
+                                            e.stopPropagation();
                                             setJsonExpandTitle(f.name);
                                             setJsonExpandContent(rawJson);
                                             setJsonExpandModalOpen(true);
@@ -2802,57 +2860,61 @@ export const CollectionsView: React.FC = () => {
                                   );
                                 })}
 
-                              <Table.Td>
-                                <Stack gap={1}>
-                                  <Text
-                                    size="xs"
-                                    style={{
-                                      fontFamily: "var(--font-mono)",
-                                      fontSize: "11px",
-                                      color: "var(--color-text-secondary)",
-                                    }}
-                                  >
-                                    {rec.created_at
-                                      ? rec.created_at.substring(0, 10)
-                                      : "-"}
-                                  </Text>
-                                  <Text
-                                    size="10px"
-                                    c="dimmed"
-                                    style={{ fontFamily: "var(--font-mono)" }}
-                                  >
-                                    {rec.created_at
-                                      ? rec.created_at.substring(11, 19) + "Z"
-                                      : ""}
-                                  </Text>
-                                </Stack>
-                              </Table.Td>
+                              {shouldShowSystemCreatedAt && (
+                                <Table.Td>
+                                  <Stack gap={1}>
+                                    <Text
+                                      size="xs"
+                                      style={{
+                                        fontFamily: "var(--font-mono)",
+                                        fontSize: "11px",
+                                        color: "var(--color-text-secondary)",
+                                      }}
+                                    >
+                                      {rec.created_at
+                                        ? rec.created_at.substring(0, 10)
+                                        : "-"}
+                                    </Text>
+                                    <Text
+                                      size="10px"
+                                      c="dimmed"
+                                      style={{ fontFamily: "var(--font-mono)" }}
+                                    >
+                                      {rec.created_at
+                                        ? rec.created_at.substring(11, 19) + "Z"
+                                        : ""}
+                                    </Text>
+                                  </Stack>
+                                </Table.Td>
+                              )}
 
-                              <Table.Td>
-                                <Stack gap={1}>
-                                  <Text
-                                    size="xs"
-                                    style={{
-                                      fontFamily: "var(--font-mono)",
-                                      fontSize: "11px",
-                                      color: "var(--color-text-secondary)",
-                                    }}
-                                  >
-                                    {rec.updated_at
-                                      ? rec.updated_at.substring(0, 10)
-                                      : "-"}
-                                  </Text>
-                                  <Text
-                                    size="10px"
-                                    c="dimmed"
-                                    style={{ fontFamily: "var(--font-mono)" }}
-                                  >
-                                    {rec.updated_at
-                                      ? rec.updated_at.substring(11, 19) + "Z"
-                                      : ""}
-                                  </Text>
-                                </Stack>
-                              </Table.Td>
+                              {shouldShowSystemUpdatedAt && (
+                                <Table.Td>
+                                  <Stack gap={1}>
+                                    <Text
+                                      size="xs"
+                                      style={{
+                                        fontFamily: "var(--font-mono)",
+                                        fontSize: "11px",
+                                        color: "var(--color-text-secondary)",
+                                      }}
+                                    >
+                                      {rec.updated_at
+                                        ? rec.updated_at.substring(0, 10)
+                                        : "-"}
+                                    </Text>
+                                    <Text
+                                      size="10px"
+                                      c="dimmed"
+                                      style={{ fontFamily: "var(--font-mono)" }}
+                                    >
+                                      {rec.updated_at
+                                        ? rec.updated_at.substring(11, 19) + "Z"
+                                        : ""}
+                                    </Text>
+                                  </Stack>
+                                </Table.Td>
+                              )}
 
                               <Table.Td
                                 style={{ textAlign: "right" }}
@@ -2916,7 +2978,7 @@ export const CollectionsView: React.FC = () => {
                         {records.length === 0 && (
                           <Table.Tr>
                             <Table.Td
-                              colSpan={selectedCollection.fields.length + 4}
+                              colSpan={visibleFields.length + (shouldShowSystemCreatedAt ? 1 : 0) + (shouldShowSystemUpdatedAt ? 1 : 0) + 3}
                               style={{ textAlign: "center", padding: "80px 0" }}
                             >
                               <Stack align="center" gap="xs">
@@ -3661,18 +3723,38 @@ export const CollectionsView: React.FC = () => {
                 {collectionType !== "auth" &&
                   collectionFormName !== "users" && (
                     <div>
-                      <Text
-                        size="xs"
-                        fw={700}
-                        c="dimmed"
-                        style={{
-                          textTransform: "uppercase",
-                          letterSpacing: "0.06em",
-                        }}
-                        mb={6}
-                      >
-                        System Fields
-                      </Text>
+                      <Group justify="space-between" align="center" mb={6}>
+                        <Text
+                          size="xs"
+                          fw={700}
+                          c="dimmed"
+                          style={{
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                          }}
+                        >
+                          System Fields
+                        </Text>
+                        <Switch
+                          size="xs"
+                          label="Include Timestamps"
+                          checked={collectionOptions.timestamps !== false}
+                          onChange={(e) =>
+                            setCollectionOptions((prev) => ({
+                              ...prev,
+                              timestamps: e.currentTarget.checked,
+                            }))
+                          }
+                          color="neonGreen"
+                          styles={{
+                            label: {
+                              fontSize: "11px",
+                              fontWeight: 600,
+                              color: "var(--color-text-secondary)",
+                            },
+                          }}
+                        />
+                      </Group>
                       <Paper
                         p="xs"
                         withBorder
@@ -3688,7 +3770,9 @@ export const CollectionsView: React.FC = () => {
                             py={4}
                             style={{
                               borderBottom:
-                                "1px solid var(--color-border-subtle)",
+                                collectionOptions.timestamps !== false
+                                  ? "1px solid var(--color-border-subtle)"
+                                  : undefined,
                             }}
                           >
                             <Group gap="xs">
@@ -3705,44 +3789,52 @@ export const CollectionsView: React.FC = () => {
                               System ID (Primary Key)
                             </Badge>
                           </Group>
-                          <Group
-                            justify="space-between"
-                            px="xs"
-                            py={4}
-                            style={{
-                              borderBottom:
-                                "1px solid var(--color-border-subtle)",
-                            }}
-                          >
-                            <Group gap="xs">
-                              <IconCalendar size={15} color="#a855f7" />
-                              <Text
-                                size="xs"
-                                fw={600}
-                                style={{ fontFamily: "var(--font-mono)" }}
+                          {collectionOptions.timestamps !== false ? (
+                            <>
+                              <Group
+                                justify="space-between"
+                                px="xs"
+                                py={4}
+                                style={{
+                                  borderBottom:
+                                    "1px solid var(--color-border-subtle)",
+                                }}
                               >
-                                created_at
-                              </Text>
-                            </Group>
-                            <Badge size="xs" variant="outline" color="violet">
-                              Autodate: Create
-                            </Badge>
-                          </Group>
-                          <Group justify="space-between" px="xs" py={4}>
-                            <Group gap="xs">
-                              <IconClock size={15} color="#ec4899" />
-                              <Text
-                                size="xs"
-                                fw={600}
-                                style={{ fontFamily: "var(--font-mono)" }}
-                              >
-                                updated_at
-                              </Text>
-                            </Group>
-                            <Badge size="xs" variant="outline" color="pink">
-                              Autodate: Update
-                            </Badge>
-                          </Group>
+                                <Group gap="xs">
+                                  <IconCalendar size={15} color="#a855f7" />
+                                  <Text
+                                    size="xs"
+                                    fw={600}
+                                    style={{ fontFamily: "var(--font-mono)" }}
+                                  >
+                                    created_at
+                                  </Text>
+                                </Group>
+                                <Badge size="xs" variant="outline" color="violet">
+                                  Autodate: Create
+                                </Badge>
+                              </Group>
+                              <Group justify="space-between" px="xs" py={4}>
+                                <Group gap="xs">
+                                  <IconClock size={15} color="#ec4899" />
+                                  <Text
+                                    size="xs"
+                                    fw={600}
+                                    style={{ fontFamily: "var(--font-mono)" }}
+                                  >
+                                    updated_at
+                                  </Text>
+                                </Group>
+                                <Badge size="xs" variant="outline" color="pink">
+                                  Autodate: Update
+                                </Badge>
+                              </Group>
+                            </>
+                          ) : (
+                            <Text size="xs" c="dimmed" px="xs" py={4} fs="italic">
+                              Timestamps disabled (created_at & updated_at will not be created)
+                            </Text>
+                          )}
                         </Stack>
                       </Paper>
                     </div>
@@ -3765,6 +3857,27 @@ export const CollectionsView: React.FC = () => {
 
                     {fields.map((field, idx) => {
                       const isExpanded = expandedFieldIndex === idx;
+                      const fieldTrimmed = (field.name || "").trim();
+                      const fieldNormalized = fieldTrimmed.toLowerCase();
+                      const isDuplicateName =
+                        fieldTrimmed !== "" &&
+                        fields.some(
+                          (other, oIdx) =>
+                            oIdx !== idx &&
+                            (other.name || "").trim().toLowerCase() === fieldNormalized
+                        );
+                      const isReservedId = fieldNormalized === "id";
+                      const isReservedTimestamp =
+                        collectionOptions.timestamps !== false &&
+                        (fieldNormalized === "created_at" || fieldNormalized === "updated_at");
+                      const fieldNameError = isDuplicateName
+                        ? "Duplicate column name"
+                        : isReservedId
+                        ? "'id' is reserved"
+                        : isReservedTimestamp
+                        ? "Reserved timestamp"
+                        : undefined;
+
                       return (
                         <Paper
                           key={idx}
@@ -3792,6 +3905,7 @@ export const CollectionsView: React.FC = () => {
                               <TextInput
                                 placeholder="field_name"
                                 value={field.name}
+                                error={fieldNameError}
                                 onChange={(e) =>
                                   updateField(idx, { name: e.target.value })
                                 }
@@ -4586,10 +4700,19 @@ export const CollectionsView: React.FC = () => {
                   variant="subtle"
                   leftSection={<IconPlus size={16} />}
                   onClick={() => {
+                    let nextName = `field_${fields.length + 1}`;
+                    let counter = fields.length + 1;
+                    const existingNames = new Set(
+                      fields.map((f) => (f.name || "").trim().toLowerCase())
+                    );
+                    while (existingNames.has(nextName.toLowerCase())) {
+                      counter++;
+                      nextName = `field_${counter}`;
+                    }
                     const newIdx = fields.length;
                     setFields([
                       ...fields,
-                      { name: "", type: "text", required: false, max: 5000 },
+                      { name: nextName, type: "text", required: false, max: 5000 },
                     ]);
                     setExpandedFieldIndex(newIdx);
                   }}
